@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,7 +20,9 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal(err)
+		logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		logger.Error("trip service stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -30,7 +32,7 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	logger := log.New(os.Stdout, "trip-service: ", log.LstdFlags|log.Lmicroseconds)
+	logger := newLogger(cfg.LogLevel)
 
 	appCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -73,7 +75,7 @@ func run() error {
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Printf("HTTP server is listening on %s", cfg.HTTP.Addr)
+		logger.Info("HTTP server is listening", "address", cfg.HTTP.Addr)
 		serverErrors <- server.ListenAndServe()
 	}()
 
@@ -90,6 +92,22 @@ func run() error {
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("shutdown HTTP server: %w", err)
 		}
+		logger.Info("HTTP server stopped")
 		return nil
 	}
+}
+
+func newLogger(levelName string) *slog.Logger {
+	level := slog.LevelInfo
+	switch levelName {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+	return slog.New(handler).With("service", "trip-service")
 }

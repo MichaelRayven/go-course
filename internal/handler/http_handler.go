@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"time"
@@ -42,12 +42,12 @@ type HTTPHandler struct {
 	db           Pinger
 	tripService  *service.TripService
 	queryTimeout time.Duration
-	logger       *log.Logger
+	logger       *slog.Logger
 }
 
 var _ api.ServerInterface = (*HTTPHandler)(nil)
 
-func NewHTTPHandler(db Pinger, tripService *service.TripService, queryTimeout time.Duration, logger *log.Logger) *HTTPHandler {
+func NewHTTPHandler(db Pinger, tripService *service.TripService, queryTimeout time.Duration, logger *slog.Logger) *HTTPHandler {
 	return &HTTPHandler{
 		Unimplemented: api.Unimplemented{},
 		db:            db,
@@ -60,7 +60,8 @@ func NewHTTPHandler(db Pinger, tripService *service.TripService, queryTimeout ti
 func (h *HTTPHandler) Routes() http.Handler {
 	router := chi.NewRouter()
 
-	router.Use(middleware.Logger)
+	router.Use(middleware.RequestID)
+	router.Use(h.logRequests)
 	router.Use(middleware.Recoverer)
 
 	return api.HandlerWithOptions(h, api.ChiServerOptions{
@@ -68,6 +69,24 @@ func (h *HTTPHandler) Routes() http.Handler {
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, _ error) {
 			writeInvalidRequest(w, r, "Request parameters are invalid")
 		},
+	})
+}
+
+func (h *HTTPHandler) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedAt := time.Now()
+		responseWriter := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+		next.ServeHTTP(responseWriter, r)
+
+		h.logger.InfoContext(r.Context(), "HTTP request",
+			"request_id", middleware.GetReqID(r.Context()),
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", responseWriter.Status(),
+			"bytes", responseWriter.BytesWritten(),
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		)
 	})
 }
 
@@ -98,7 +117,10 @@ func (h *HTTPHandler) GetTrip(w http.ResponseWriter, r *http.Request, tripId api
 		return
 	}
 	if err != nil {
-		h.logger.Printf("get trip: %v", err)
+		h.logger.ErrorContext(r.Context(), "get trip",
+			"trip_id", tripId,
+			"error", err,
+		)
 
 		writeProblem(w, r, http.StatusInternalServerError,
 			"https://tripgo.example/problems/internal-error",
@@ -125,7 +147,10 @@ func (h *HTTPHandler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId 
 			"trip_completed", "Trip completed", "Trip with the specified ID is already completed")
 		return
 	} else if err != nil {
-		h.logger.Printf("finish trip: %v", err)
+		h.logger.ErrorContext(r.Context(), "finish trip",
+			"trip_id", tripId,
+			"error", err,
+		)
 
 		writeProblem(w, r, http.StatusInternalServerError,
 			"https://tripgo.example/problems/internal-error",
@@ -136,6 +161,7 @@ func (h *HTTPHandler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId 
 		return
 	}
 
+	h.logger.InfoContext(r.Context(), "trip finished", "trip_id", trip.Id)
 	writeJSON(w, http.StatusOK, trip)
 }
 
@@ -211,7 +237,7 @@ func (h *HTTPHandler) CreateTrip(w http.ResponseWriter, r *http.Request, _ api.C
 		return
 	}
 	if err != nil {
-		h.logger.Printf("create trip: %v", err)
+		h.logger.ErrorContext(r.Context(), "create trip", "error", err)
 		writeProblem(w, r, http.StatusInternalServerError,
 			"https://tripgo.example/problems/internal-error",
 			"internal_error",
@@ -221,6 +247,7 @@ func (h *HTTPHandler) CreateTrip(w http.ResponseWriter, r *http.Request, _ api.C
 		return
 	}
 
+	h.logger.InfoContext(r.Context(), "trip created", "trip_id", trip.Id)
 	w.Header().Set("Location", "/api/v1/trips/"+trip.Id.String())
 	writeJSON(w, http.StatusCreated, trip)
 }

@@ -23,7 +23,7 @@ make migrate
 make run
 ```
 
-Перед запуском должны быть заданы все переменные из `.env.example`.  
+Перед запуском должны быть заданы все переменные из `.env.example`, включая таймауты HTTP сервера, которые нужно задать вручную в `.env`.  
   
 Основные команды:
 ```bash
@@ -48,7 +48,7 @@ make run       # запустить trip-service
 | `DATABASE_CONNECT_TIMEOUT` | таймаут подключения к PostgreSQL |
 | `DATABASE_QUERY_TIMEOUT` | таймаут запросов и транзакций |
 | `SHUTDOWN_TIMEOUT` | таймаут graceful shutdown |
-| `LOG_LEVEL` | уровень логирования |
+| `LOG_LEVEL` | минимальный уровень JSON-логов (`debug`, `info`, `warn`, `error`) |
 
 ### Решения
 
