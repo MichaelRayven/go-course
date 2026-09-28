@@ -75,7 +75,7 @@ make run       # запустить trip-service
 Поэтому два конкурентных запроса не могут оба завершить поездку: один обновляет
 строку, второй получает ноль строк и возвращает `409 trip_completed`.
 
-## Где что лежит
+## Содержимое курса
 
 | Что | Где |
 |---|---|
@@ -83,10 +83,3 @@ make run       # запустить trip-service
 | Слайды и записи лекций | [`lections/`](https://github.com/course-go-autumn-2026/course/tree/main/lections) |
 | Как оценивают, дедлайны, порядок сдачи | [`homework/docs/grading.md`](https://github.com/course-go-autumn-2026/course/blob/main/homework/docs/grading.md) |
 | Локальное окружение и утилита `tripgoctl` | [`course-go-autumn-2026/course-infra`](https://github.com/course-go-autumn-2026/course-infra) |
-
-Задания появляются по мере курса, каждое — после своей пары лекций.
-
-## Как сдавать
-
-Ветка `homework/NN` от `main`, pull request в `main` своего форка, ссылка
-ментору до дедлайна. Подробно — в `grading.md` репозитория курса.
