@@ -29,6 +29,8 @@ make run
 ```bash
 make generate  # повторно сгенерировать Go-типы и chi-сервер из OpenAPI
 make migrate   # применить миграции к DATABASE_URL
+make test      # выполнить все тесты
+make lint      # golangci-lint (с лабораторной работы 2)
 make run       # запустить trip-service
 ```
 
