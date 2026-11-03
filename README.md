@@ -8,7 +8,7 @@
 
 ### Запуск
 
-Понадобятся Go, `make` и установленный `tripgoctl`.
+Понадобятся Go, `make` и установленный [`tripgoctl`](https://github.com/course-go-autumn-2026/course-infra).
 Локальное окружение поднимает PostgreSQL и создаёт `.env` с актуальным адресом:
 
 ```bash

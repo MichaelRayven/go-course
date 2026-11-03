@@ -11,8 +11,8 @@ import (
 	"syscall"
 
 	"github.com/MichaelRayven/go-course/internal/config"
-	"github.com/MichaelRayven/go-course/internal/db"
 	handler "github.com/MichaelRayven/go-course/internal/handler"
+	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
 	"github.com/MichaelRayven/go-course/internal/repository"
 	"github.com/MichaelRayven/go-course/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,7 +59,7 @@ func run() error {
 		return fmt.Errorf("ping PostgreSQL: %w", err)
 	}
 
-	transactionManager := db.NewTransactionManager(pool, cfg.Database.QueryTimeout)
+	transactionManager := transaction.NewTransactionManager(pool, cfg.Database.QueryTimeout)
 	tripRepository := repository.NewTripRepository(pool, cfg.Database.QueryTimeout)
 	tripService := service.NewTripService(tripRepository, transactionManager)
 

@@ -1,4 +1,4 @@
-package db
+package postgres
 
 import (
 	"context"
@@ -17,17 +17,17 @@ type DBTX interface {
 
 type transactionContextKey struct{}
 
-func contextWithTransaction(ctx context.Context, tx pgx.Tx) context.Context {
+func ContextWithTransaction(ctx context.Context, tx pgx.Tx) context.Context {
 	return context.WithValue(ctx, transactionContextKey{}, tx)
 }
 
-func transactionFromContext(ctx context.Context) (pgx.Tx, bool) {
+func TransactionFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(transactionContextKey{}).(pgx.Tx)
 	return tx, ok
 }
 
 func ExecutorFromContext(ctx context.Context, fallback DBTX) DBTX {
-	if tx, ok := transactionFromContext(ctx); ok {
+	if tx, ok := TransactionFromContext(ctx); ok {
 		return tx
 	}
 

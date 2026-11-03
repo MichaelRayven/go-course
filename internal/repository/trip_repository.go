@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/Masterminds/squirrel"
-	"github.com/MichaelRayven/go-course/internal/db"
 	api "github.com/MichaelRayven/go-course/internal/generated"
+	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -83,7 +83,7 @@ func (r *TripRepository) Create(ctx context.Context, trip api.Trip) (api.Trip, e
 	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	created, err := scanTrip(db.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
+	created, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
 	if err == nil {
 		return created, nil
 	}
@@ -111,7 +111,7 @@ func (r *TripRepository) AddStatusHistory(ctx context.Context, change StatusChan
 	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	if _, err := db.ExecutorFromContext(queryCtx, r.pool).Exec(queryCtx, query, args...); err != nil {
+	if _, err := postgres.ExecutorFromContext(queryCtx, r.pool).Exec(queryCtx, query, args...); err != nil {
 		return fmt.Errorf("add trip status history: %w", err)
 	}
 
@@ -131,7 +131,7 @@ func (r *TripRepository) GetByID(ctx context.Context, id api.TripId) (api.Trip, 
 	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	trip, err := scanTrip(db.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
+	trip, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return api.Trip{}, ErrTripNotFound
 	}
@@ -161,7 +161,7 @@ func (r *TripRepository) Finish(ctx context.Context, id api.TripId, finishedAt t
 	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	trip, err := scanTrip(db.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
+	trip, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
 	if err == nil {
 		return trip, nil
 	}

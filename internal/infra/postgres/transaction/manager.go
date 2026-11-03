@@ -1,4 +1,4 @@
-package db
+package transaction
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -26,7 +27,7 @@ func NewTransactionManager(pool *pgxpool.Pool, timeout time.Duration) *Transacti
 }
 
 func (m *TransactionManager) Do(ctx context.Context, fn func(ctx context.Context) error) (err error) {
-	if _, ok := transactionFromContext(ctx); ok {
+	if _, ok := postgres.TransactionFromContext(ctx); ok {
 		return fn(ctx)
 	}
 
@@ -38,7 +39,7 @@ func (m *TransactionManager) Do(ctx context.Context, fn func(ctx context.Context
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 
-	txCtx = contextWithTransaction(txCtx, tx)
+	txCtx = postgres.ContextWithTransaction(txCtx, tx)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			rollbackCtx, cancelRollback := context.WithTimeout(context.WithoutCancel(ctx), m.timeout)

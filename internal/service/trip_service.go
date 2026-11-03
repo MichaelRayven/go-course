@@ -7,17 +7,17 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/MichaelRayven/go-course/internal/db"
 	api "github.com/MichaelRayven/go-course/internal/generated"
+	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
 	"github.com/MichaelRayven/go-course/internal/repository"
 )
 
 type TripService struct {
 	repository *repository.TripRepository
-	txManager  db.TxManager
+	txManager  transaction.TxManager
 }
 
-func NewTripService(repository *repository.TripRepository, txManager db.TxManager) *TripService {
+func NewTripService(repository *repository.TripRepository, txManager transaction.TxManager) *TripService {
 	return &TripService{repository: repository, txManager: txManager}
 }
 
