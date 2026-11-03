@@ -1,3 +1,5 @@
+// Package service is a temporary bridge between the old handler and the new
+// domain/repository packages. It is replaced by internal/usecase in T6.
 package service
 
 import (
@@ -10,103 +12,115 @@ import (
 	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	api "github.com/MichaelRayven/go-course/internal/generated"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
-	"github.com/MichaelRayven/go-course/internal/repository"
+	triprepo "github.com/MichaelRayven/go-course/internal/repository/trip"
 )
 
 type TripService struct {
-	repository *repository.TripRepository
+	repository *triprepo.Repository
 	txManager  transaction.TxManager
 }
 
-func NewTripService(repository *repository.TripRepository, txManager transaction.TxManager) *TripService {
+func NewTripService(repository *triprepo.Repository, txManager transaction.TxManager) *TripService {
 	return &TripService{repository: repository, txManager: txManager}
 }
 
-func (s *TripService) Create(
-	ctx context.Context,
-	data api.TripData,
-) (api.Trip, error) {
+func (s *TripService) Create(ctx context.Context, data api.TripData) (api.Trip, error) {
 	now := time.Now().UTC()
 
-	tripToCreate := api.Trip{
-		Id:             uuid.New(),
-		UserId:         data.UserId,
-		DriverId:       data.DriverId,
-		StartPoint:     data.StartPoint,
-		EndPoint:       data.EndPoint,
-		Price:          data.Price,
-		Status:         api.Active,
-		StartedAt:      now,
-		FinishedAt:     nil,
-		LastPositionAt: nil,
+	t, err := trip.New(
+		uuid.New(),
+		data.UserId,
+		data.DriverId,
+		trip.Coordinates{Latitude: data.StartPoint.Latitude, Longitude: data.StartPoint.Longitude},
+		trip.Coordinates{Latitude: data.EndPoint.Latitude, Longitude: data.EndPoint.Longitude},
+		data.Price,
+		now,
+	)
+	if err != nil {
+		return api.Trip{}, fmt.Errorf("new trip: %w", err)
 	}
 
-	var createdTrip api.Trip
-
-	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
-		t, err := s.repository.Create(txCtx, tripToCreate)
-		if err != nil {
-			return fmt.Errorf("create trip: %w", err)
+	err = s.txManager.Do(ctx, func(txCtx context.Context) error {
+		if err := s.repository.Save(txCtx, *t); err != nil {
+			return fmt.Errorf("save trip: %w", err)
 		}
 
-		if err := s.repository.AddStatusHistory(
-			txCtx,
-			trip.StatusChange{
-				TripID:     t.Id,
-				FromStatus: nil,
-				ToStatus:   trip.StatusActive,
-				Reason:     nil,
-				ChangedAt:  now,
-			},
-		); err != nil {
+		if err := s.repository.AddStatusHistory(txCtx, trip.StatusChange{
+			TripID:    t.ID,
+			ToStatus:  trip.StatusActive,
+			ChangedAt: now,
+		}); err != nil {
 			return fmt.Errorf("add initial trip status: %w", err)
 		}
 
-		createdTrip = t
 		return nil
 	})
 	if err != nil {
 		return api.Trip{}, fmt.Errorf("create trip transaction: %w", err)
 	}
 
-	return createdTrip, nil
+	return toAPI(t), nil
 }
 
 func (s *TripService) GetByID(ctx context.Context, id api.TripId) (api.Trip, error) {
-	trip, err := s.repository.GetByID(ctx, id)
+	t, err := s.repository.Fetch(ctx, id)
 	if err != nil {
 		return api.Trip{}, fmt.Errorf("get trip: %w", err)
 	}
-	return trip, nil
+
+	return toAPI(t), nil
 }
 
 func (s *TripService) Finish(ctx context.Context, id api.TripId) (api.Trip, error) {
 	now := time.Now().UTC()
-	var finishedTrip api.Trip
+
+	var finished *trip.Trip
 
 	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
-		t, err := s.repository.Finish(txCtx, id, now)
+		t, err := s.repository.Fetch(txCtx, id)
 		if err != nil {
+			return fmt.Errorf("fetch trip: %w", err)
+		}
+
+		if err := t.Finish(now); err != nil {
 			return fmt.Errorf("finish trip: %w", err)
+		}
+
+		if err := s.repository.Finish(txCtx, t); err != nil {
+			return fmt.Errorf("persist finished trip: %w", err)
 		}
 
 		fromStatus := trip.StatusActive
 		if err := s.repository.AddStatusHistory(txCtx, trip.StatusChange{
-			TripID:     t.Id,
+			TripID:     t.ID,
 			FromStatus: &fromStatus,
 			ToStatus:   trip.StatusCompleted,
-			Reason:     nil,
 			ChangedAt:  now,
 		}); err != nil {
 			return fmt.Errorf("add completed trip status: %w", err)
 		}
 
-		finishedTrip = t
+		finished = t
 		return nil
 	})
 	if err != nil {
 		return api.Trip{}, fmt.Errorf("finish trip transaction: %w", err)
 	}
 
-	return finishedTrip, nil
+	return toAPI(finished), nil
+}
+
+func toAPI(t *trip.Trip) api.Trip {
+	return api.Trip{
+		Id:             t.ID,
+		UserId:         t.UserID,
+		DriverId:       t.DriverID,
+		StartPoint:     api.Coordinates{Latitude: t.StartPoint.Latitude, Longitude: t.StartPoint.Longitude},
+		EndPoint:       api.Coordinates{Latitude: t.EndPoint.Latitude, Longitude: t.EndPoint.Longitude},
+		Price:          t.Price,
+		Status:         api.TripStatus(t.Status),
+		StartedAt:      t.StartedAt,
+		FinishedAt:     t.FinishedAt,
+		LastPositionAt: t.LastPositionAt,
+	}
 }

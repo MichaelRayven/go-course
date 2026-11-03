@@ -13,7 +13,7 @@ import (
 	"github.com/MichaelRayven/go-course/internal/config"
 	handler "github.com/MichaelRayven/go-course/internal/handler"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
-	"github.com/MichaelRayven/go-course/internal/repository"
+	triprepo "github.com/MichaelRayven/go-course/internal/repository/trip"
 	"github.com/MichaelRayven/go-course/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -60,7 +60,7 @@ func run() error {
 	}
 
 	transactionManager := transaction.NewTransactionManager(pool, cfg.Database.QueryTimeout)
-	tripRepository := repository.NewTripRepository(pool, cfg.Database.QueryTimeout)
+	tripRepository := triprepo.New(pool, cfg.Database.QueryTimeout)
 	tripService := service.NewTripService(tripRepository, transactionManager)
 
 	httpHandler := handler.NewHTTPHandler(pool, tripService, cfg.Database.QueryTimeout, logger)
