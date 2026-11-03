@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/squirrel"
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	api "github.com/MichaelRayven/go-course/internal/generated"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 	"github.com/jackc/pgx/v5"
@@ -18,20 +19,6 @@ const (
 	activeDriverIndex       = "one_trip_active_per_driver_idx"
 	postgresUniqueViolation = "23505"
 )
-
-var (
-	ErrDriverBusy    = errors.New("driver already has an active trip")
-	ErrTripNotFound  = errors.New("trip not found")
-	ErrTripCompleted = errors.New("trip is already completed")
-)
-
-type StatusChange struct {
-	TripID     api.TripId
-	FromStatus *api.TripStatus
-	ToStatus   api.TripStatus
-	Reason     *string
-	ChangedAt  time.Time
-}
 
 type TripRepository struct {
 	pool         *pgxpool.Pool
@@ -45,7 +32,7 @@ func NewTripRepository(pool *pgxpool.Pool, queryTimeout time.Duration) *TripRepo
 	}
 }
 
-func (r *TripRepository) Create(ctx context.Context, trip api.Trip) (api.Trip, error) {
+func (r *TripRepository) Create(ctx context.Context, t api.Trip) (api.Trip, error) {
 	query, args, err := squirrel.Insert("trips").
 		Columns(
 			"id",
@@ -61,17 +48,17 @@ func (r *TripRepository) Create(ctx context.Context, trip api.Trip) (api.Trip, e
 			"finished_at",
 		).
 		Values(
-			trip.Id,
-			trip.UserId,
-			trip.DriverId,
-			trip.StartPoint.Latitude,
-			trip.StartPoint.Longitude,
-			trip.EndPoint.Latitude,
-			trip.EndPoint.Longitude,
-			trip.Price,
-			trip.Status,
-			trip.StartedAt,
-			trip.FinishedAt,
+			t.Id,
+			t.UserId,
+			t.DriverId,
+			t.StartPoint.Latitude,
+			t.StartPoint.Longitude,
+			t.EndPoint.Latitude,
+			t.EndPoint.Longitude,
+			t.Price,
+			t.Status,
+			t.StartedAt,
+			t.FinishedAt,
 		).
 		Suffix("RETURNING " + tripColumns()).
 		PlaceholderFormat(squirrel.Dollar).
@@ -92,13 +79,13 @@ func (r *TripRepository) Create(ctx context.Context, trip api.Trip) (api.Trip, e
 	if errors.As(err, &pgErr) &&
 		pgErr.Code == postgresUniqueViolation &&
 		pgErr.ConstraintName == activeDriverIndex {
-		return api.Trip{}, ErrDriverBusy
+		return api.Trip{}, trip.ErrDriverBusy
 	}
 
 	return api.Trip{}, fmt.Errorf("create trip: %w", err)
 }
 
-func (r *TripRepository) AddStatusHistory(ctx context.Context, change StatusChange) error {
+func (r *TripRepository) AddStatusHistory(ctx context.Context, change trip.StatusChange) error {
 	query, args, err := squirrel.Insert("trip_status_history").
 		Columns("trip_id", "from_status", "to_status", "reason", "changed_at").
 		Values(change.TripID, change.FromStatus, change.ToStatus, change.Reason, change.ChangedAt).
@@ -131,15 +118,15 @@ func (r *TripRepository) GetByID(ctx context.Context, id api.TripId) (api.Trip, 
 	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	trip, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
+	t, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return api.Trip{}, ErrTripNotFound
+		return api.Trip{}, trip.ErrTripNotFound
 	}
 	if err != nil {
 		return api.Trip{}, fmt.Errorf("get trip: %w", err)
 	}
 
-	return trip, nil
+	return t, nil
 }
 
 func (r *TripRepository) Finish(ctx context.Context, id api.TripId, finishedAt time.Time) (api.Trip, error) {
@@ -161,9 +148,9 @@ func (r *TripRepository) Finish(ctx context.Context, id api.TripId, finishedAt t
 	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
 	defer cancel()
 
-	trip, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
+	t, err := scanTrip(postgres.ExecutorFromContext(queryCtx, r.pool).QueryRow(queryCtx, query, args...))
 	if err == nil {
-		return trip, nil
+		return t, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return api.Trip{}, fmt.Errorf("finish trip: %w", err)
@@ -173,7 +160,7 @@ func (r *TripRepository) Finish(ctx context.Context, id api.TripId, finishedAt t
 		return api.Trip{}, err
 	}
 
-	return api.Trip{}, ErrTripCompleted
+	return api.Trip{}, trip.ErrTripCompleted
 }
 
 func tripColumns() string {

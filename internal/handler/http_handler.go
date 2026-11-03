@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	trips "github.com/MichaelRayven/go-course/internal/domain/trip"
 	api "github.com/MichaelRayven/go-course/internal/generated"
-	"github.com/MichaelRayven/go-course/internal/repository"
 	"github.com/MichaelRayven/go-course/internal/service"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -107,7 +107,7 @@ func (h *HTTPHandler) Ready(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) GetTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
 	trip, err := h.tripService.GetByID(r.Context(), tripId)
-	if errors.Is(err, repository.ErrTripNotFound) {
+	if errors.Is(err, trips.ErrTripNotFound) {
 		writeProblem(w, r, http.StatusNotFound,
 			"https://tripgo.example/problems/trip-not-found",
 			"trip_not_found",
@@ -136,12 +136,12 @@ func (h *HTTPHandler) GetTrip(w http.ResponseWriter, r *http.Request, tripId api
 
 func (h *HTTPHandler) FinishTrip(w http.ResponseWriter, r *http.Request, tripId api.TripId) {
 	trip, err := h.tripService.Finish(r.Context(), tripId)
-	if errors.Is(err, repository.ErrTripNotFound) {
+	if errors.Is(err, trips.ErrTripNotFound) {
 		writeProblem(w, r, http.StatusNotFound,
 			"https://tripgo.example/problems/trip-not-found",
 			"trip_not_found", "Trip not found", "Trip with the specified ID was not found")
 		return
-	} else if errors.Is(err, repository.ErrTripCompleted) {
+	} else if errors.Is(err, trips.ErrTripCompleted) {
 		writeProblem(w, r, http.StatusConflict,
 			"https://tripgo.example/problems/trip-completed",
 			"trip_completed", "Trip completed", "Trip with the specified ID is already completed")
@@ -227,7 +227,7 @@ func (h *HTTPHandler) CreateTrip(w http.ResponseWriter, r *http.Request, _ api.C
 		},
 		Price: *request.Price,
 	})
-	if errors.Is(err, repository.ErrDriverBusy) {
+	if errors.Is(err, trips.ErrDriverBusy) {
 		writeProblem(w, r, http.StatusConflict,
 			"https://tripgo.example/problems/driver-busy",
 			"driver_busy",

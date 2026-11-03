@@ -3,13 +3,13 @@ package trip
 import (
 	"time"
 
-	api "github.com/MichaelRayven/go-course/internal/generated"
+	"github.com/google/uuid"
 )
 
 type StatusChange struct {
-	TripID     api.TripId
-	FromStatus *api.TripStatus
-	ToStatus   api.TripStatus
+	TripID     uuid.UUID
+	FromStatus *Status
+	ToStatus   Status
 	Reason     *string
 	ChangedAt  time.Time
 }

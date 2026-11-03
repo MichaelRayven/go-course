@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	api "github.com/MichaelRayven/go-course/internal/generated"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
 	"github.com/MichaelRayven/go-course/internal/repository"
@@ -43,17 +44,17 @@ func (s *TripService) Create(
 	var createdTrip api.Trip
 
 	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
-		trip, err := s.repository.Create(txCtx, tripToCreate)
+		t, err := s.repository.Create(txCtx, tripToCreate)
 		if err != nil {
 			return fmt.Errorf("create trip: %w", err)
 		}
 
 		if err := s.repository.AddStatusHistory(
 			txCtx,
-			repository.StatusChange{
-				TripID:     trip.Id,
+			trip.StatusChange{
+				TripID:     t.Id,
 				FromStatus: nil,
-				ToStatus:   api.Active,
+				ToStatus:   trip.StatusActive,
 				Reason:     nil,
 				ChangedAt:  now,
 			},
@@ -61,7 +62,7 @@ func (s *TripService) Create(
 			return fmt.Errorf("add initial trip status: %w", err)
 		}
 
-		createdTrip = trip
+		createdTrip = t
 		return nil
 	})
 	if err != nil {
@@ -84,23 +85,23 @@ func (s *TripService) Finish(ctx context.Context, id api.TripId) (api.Trip, erro
 	var finishedTrip api.Trip
 
 	err := s.txManager.Do(ctx, func(txCtx context.Context) error {
-		trip, err := s.repository.Finish(txCtx, id, now)
+		t, err := s.repository.Finish(txCtx, id, now)
 		if err != nil {
 			return fmt.Errorf("finish trip: %w", err)
 		}
 
-		fromStatus := api.Active
-		if err := s.repository.AddStatusHistory(txCtx, repository.StatusChange{
-			TripID:     trip.Id,
+		fromStatus := trip.StatusActive
+		if err := s.repository.AddStatusHistory(txCtx, trip.StatusChange{
+			TripID:     t.Id,
 			FromStatus: &fromStatus,
-			ToStatus:   api.Completed,
+			ToStatus:   trip.StatusCompleted,
 			Reason:     nil,
 			ChangedAt:  now,
 		}); err != nil {
 			return fmt.Errorf("add completed trip status: %w", err)
 		}
 
-		finishedTrip = trip
+		finishedTrip = t
 		return nil
 	})
 	if err != nil {
