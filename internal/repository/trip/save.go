@@ -64,7 +64,7 @@ func (r *Repository) Save(ctx context.Context, t trip.Trip) error {
 	return nil
 }
 
-func (r *Repository) Finish(ctx context.Context, t *trip.Trip) error {
+func (r *Repository) Finish(ctx context.Context, t trip.Trip) error {
 	query, args, err := squirrel.Update("trips").
 		Set("status", t.Status).
 		Set("finished_at", t.FinishedAt).
@@ -86,7 +86,7 @@ func (r *Repository) Finish(ctx context.Context, t *trip.Trip) error {
 	tag, err := postgres.ExecutorFromContext(queryCtx, r.pool).Exec(queryCtx, query, args...)
 
 	if err != nil {
-		return fmt.Errorf("trip repository finish error: %w", err)
+		return fmt.Errorf("finish trip: %w", err)
 	}
 
 	if tag.RowsAffected() == 0 {

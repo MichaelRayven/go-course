@@ -9,12 +9,19 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/MichaelRayven/go-course/internal/config"
-	handler "github.com/MichaelRayven/go-course/internal/handler"
+	"github.com/MichaelRayven/go-course/internal/http/health"
+	"github.com/MichaelRayven/go-course/internal/http/router"
+	createhttp "github.com/MichaelRayven/go-course/internal/http/trip/create"
+	finishhttp "github.com/MichaelRayven/go-course/internal/http/trip/finish"
+	gethttp "github.com/MichaelRayven/go-course/internal/http/trip/get"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
 	triprepo "github.com/MichaelRayven/go-course/internal/repository/trip"
-	"github.com/MichaelRayven/go-course/internal/service"
+	createuc "github.com/MichaelRayven/go-course/internal/usecase/trip/create"
+	finishuc "github.com/MichaelRayven/go-course/internal/usecase/trip/finish"
+	getuc "github.com/MichaelRayven/go-course/internal/usecase/trip/get"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -61,12 +68,19 @@ func run() error {
 
 	transactionManager := transaction.NewTransactionManager(pool, cfg.Database.QueryTimeout)
 	tripRepository := triprepo.New(pool, cfg.Database.QueryTimeout)
-	tripService := service.NewTripService(tripRepository, transactionManager)
+	now := func() time.Time { return time.Now().UTC() }
 
-	httpHandler := handler.NewHTTPHandler(pool, tripService, cfg.Database.QueryTimeout, logger)
+	// TODO(T9): this wiring moves into container.New(cfg).
+	handler := router.New(router.Handlers{
+		Create: createhttp.New(createuc.New(tripRepository, transactionManager, logger, now), logger),
+		Get:    gethttp.New(getuc.New(tripRepository), logger),
+		Finish: finishhttp.New(finishuc.New(tripRepository, transactionManager, logger, now), logger),
+		Health: health.New(pool, cfg.Database.QueryTimeout),
+	}, logger)
+
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
-		Handler:           httpHandler.Routes(),
+		Handler:           handler,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		WriteTimeout:      cfg.HTTP.WriteTimeout,
