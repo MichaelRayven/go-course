@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 )
 
 type TxManager interface {

@@ -10,8 +10,11 @@ generate:
 		-o internal/generated/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
 
-lint: 
-	echo "Not implemented"
+lint:
+	golangci-lint run ./...
+
+fmt:
+	golangci-lint fmt ./...
 
 test: 
 	go test -race ./...

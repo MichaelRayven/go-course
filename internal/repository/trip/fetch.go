@@ -6,10 +6,11 @@ import (
 	"fmt"
 
 	"github.com/Masterminds/squirrel"
-	"github.com/MichaelRayven/go-course/internal/domain/trip"
-	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
+	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 )
 
 func (r *Repository) Fetch(ctx context.Context, id uuid.UUID) (*trip.Trip, error) {

@@ -6,8 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	"github.com/google/uuid"
+
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
 )
 
 type Usecase struct {
@@ -60,7 +61,6 @@ func (uc *Usecase) Execute(ctx context.Context, id uuid.UUID) (*trip.Trip, error
 		finished = t
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}

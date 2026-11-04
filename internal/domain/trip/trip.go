@@ -31,15 +31,17 @@ type Trip struct {
 	LastPositionAt *time.Time
 }
 
-func New(id uuid.UUID, userID uuid.UUID, driverID uuid.UUID, startPoint Coordinates, endPoint Coordinates, price int64, startedAt time.Time) (*Trip, error) {
+const reasonEmpty = "must not be empty"
+
+func New(id, userID, driverID uuid.UUID, startPoint, endPoint Coordinates, price int64, startedAt time.Time) (*Trip, error) {
 	if id == uuid.Nil {
-		return nil, &ValidationError{Field: "ID", Reason: "must not be empty"}
+		return nil, &ValidationError{Field: "ID", Reason: reasonEmpty}
 	}
 	if userID == uuid.Nil {
-		return nil, &ValidationError{Field: "UserID", Reason: "must not be empty"}
+		return nil, &ValidationError{Field: "UserID", Reason: reasonEmpty}
 	}
 	if driverID == uuid.Nil {
-		return nil, &ValidationError{Field: "DriverID", Reason: "must not be empty"}
+		return nil, &ValidationError{Field: "DriverID", Reason: reasonEmpty}
 	}
 	if endPoint.Latitude < -90 || endPoint.Latitude > 90 {
 		return nil, &ValidationError{Field: "EndPoint.Latitude", Reason: "must be between -90 and 90 degrees"}

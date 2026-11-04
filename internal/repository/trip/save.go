@@ -6,9 +6,10 @@ import (
 	"fmt"
 
 	"github.com/Masterminds/squirrel"
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (r *Repository) Save(ctx context.Context, t trip.Trip) error {
@@ -75,7 +76,6 @@ func (r *Repository) Finish(ctx context.Context, t trip.Trip) error {
 		}).
 		PlaceholderFormat(squirrel.Dollar).
 		ToSql()
-
 	if err != nil {
 		return fmt.Errorf("build finish trip query: %w", err)
 	}
@@ -84,7 +84,6 @@ func (r *Repository) Finish(ctx context.Context, t trip.Trip) error {
 	defer cancel()
 
 	tag, err := postgres.ExecutorFromContext(queryCtx, r.pool).Exec(queryCtx, query, args...)
-
 	if err != nil {
 		return fmt.Errorf("finish trip: %w", err)
 	}

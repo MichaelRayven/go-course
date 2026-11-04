@@ -6,8 +6,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	"github.com/google/uuid"
+
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
 )
 
 type Input struct {

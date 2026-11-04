@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	"github.com/google/uuid"
+
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
 )
 
 type Usecase struct {

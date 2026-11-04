@@ -1,8 +1,9 @@
 package trip
 
 import (
-	"github.com/MichaelRayven/go-course/internal/domain/trip"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/MichaelRayven/go-course/internal/domain/trip"
 )
 
 func tripColumns() string {

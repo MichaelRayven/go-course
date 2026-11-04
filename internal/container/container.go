@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/MichaelRayven/go-course/internal/config"
 	"github.com/MichaelRayven/go-course/internal/http/health"
 	"github.com/MichaelRayven/go-course/internal/http/router"
@@ -19,7 +21,6 @@ import (
 	createuc "github.com/MichaelRayven/go-course/internal/usecase/trip/create"
 	finishuc "github.com/MichaelRayven/go-course/internal/usecase/trip/finish"
 	getuc "github.com/MichaelRayven/go-course/internal/usecase/trip/get"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Container struct {
@@ -44,7 +45,6 @@ func newLogger(levelName string) *slog.Logger {
 }
 
 func New(ctx context.Context, cfg config.Config) (*Container, error) {
-
 	logger := newLogger(cfg.LogLevel)
 
 	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
