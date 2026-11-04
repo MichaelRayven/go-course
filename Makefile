@@ -1,4 +1,4 @@
-.PHONY: migrate generate test run
+.PHONY: migrate generate test run lint fmt
 
 migrate:
 	go tool goose -dir ./migrations postgres "$$DATABASE_URL" up
@@ -9,6 +9,7 @@ generate:
 		-package api \
 		-o internal/generated/api.gen.go \
 		contracts/openapi/trip-service.openapi.yaml
+	go generate ./...
 
 lint:
 	golangci-lint run ./...
