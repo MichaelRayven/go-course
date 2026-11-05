@@ -6,3 +6,6 @@
 bin/
 
 .DS_Store
+
+# Test coverage
+coverage.out
