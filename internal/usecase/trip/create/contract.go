@@ -1,3 +1,5 @@
+//go:generate go tool mockgen -source=${GOFILE} -destination=mocks_test.go -package=${GOPACKAGE}_test
+
 package create
 
 import (
@@ -5,8 +7,6 @@ import (
 
 	"github.com/MichaelRayven/go-course/internal/domain/trip"
 )
-
-//go:generate go tool mockgen -source=${GOFILE} -destination=mocks_test.go -package=${GOPACKAGE}_test
 
 type tripRepository interface {
 	Save(ctx context.Context, t trip.Trip) error
