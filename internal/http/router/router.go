@@ -73,10 +73,10 @@ func New(h Handlers, obs Observability, logger *slog.Logger) (http.Handler, erro
 		return nil, err
 	}
 
-	// TODO(T20): Logging goes between Tracing and Metrics.
 	r.Use(
 		middleware.Recover(logger),
 		middleware.Tracing(obs.TracerProvider, obs.Propagator, route),
+		middleware.Logging(logger, route),
 		metrics,
 	)
 

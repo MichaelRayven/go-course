@@ -16,7 +16,7 @@ import (
 func TestMetricsLabelsUseRouteTemplate(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
-	route := func(*http.Request) string { return "/api/v1/trips/{tripId}" }
+	route := tripRouteFunc
 
 	mw, err := middleware.Metrics(mp, route)
 	if err != nil {
@@ -38,7 +38,7 @@ func TestMetricsLabelsUseRouteTemplate(t *testing.T) {
 		t.Fatalf("data points = %d, want 1", len(hist.DataPoints))
 	}
 	attrs := hist.DataPoints[0].Attributes
-	assertAttr(t, attrs, "http.route", "/api/v1/trips/{tripId}")
+	assertAttr(t, attrs, "http.route", tripRoute)
 	assertAttr(t, attrs, "http.request.method", "GET")
 	if v, ok := attrs.Value("http.response.status_code"); !ok || v.AsInt64() != http.StatusNotFound {
 		t.Errorf("http.response.status_code = %v, want 404", v)

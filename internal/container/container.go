@@ -33,23 +33,8 @@ type Container struct {
 	telemetry *telemetry.Telemetry
 }
 
-func newLogger(levelName string) *slog.Logger {
-	level := slog.LevelInfo
-	switch levelName {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-	return slog.New(handler).With("service", "trip-service")
-}
-
 func New(ctx context.Context, cfg config.Config) (*Container, error) {
-	logger := newLogger(cfg.LogLevel)
+	logger := telemetry.NewLogger(os.Stdout, cfg.LogLevel, cfg.Telemetry.ServiceName)
 
 	tel, err := telemetry.New(ctx, telemetry.Config{ServiceName: cfg.Telemetry.ServiceName}, logger)
 	if err != nil {
