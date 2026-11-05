@@ -20,8 +20,9 @@ var (
 )
 
 type mocks struct {
-	repo *MocktripRepository
-	tx   *MocktxManager
+	repo    *MocktripRepository
+	tx      *MocktxManager
+	counter *MocktripCounter
 }
 
 func setup(t *testing.T) (*create.Usecase, mocks) {
@@ -29,12 +30,13 @@ func setup(t *testing.T) (*create.Usecase, mocks) {
 
 	ctrl := gomock.NewController(t)
 	m := mocks{
-		repo: NewMocktripRepository(ctrl),
-		tx:   NewMocktxManager(ctrl),
+		repo:    NewMocktripRepository(ctrl),
+		tx:      NewMocktxManager(ctrl),
+		counter: NewMocktripCounter(ctrl),
 	}
 	now := func() time.Time { return fixed }
 
-	return create.New(m.repo, m.tx, slog.New(slog.DiscardHandler), now), m
+	return create.New(m.repo, m.tx, m.counter, slog.New(slog.DiscardHandler), now), m
 }
 
 func (m mocks) runInTx() {
@@ -60,6 +62,7 @@ func TestExecuteCreatesTrip(t *testing.T) {
 
 	var saved trip.Trip
 	m.runInTx()
+	m.counter.EXPECT().Inc(gomock.Any())
 	m.repo.EXPECT().Save(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, tr trip.Trip) error {
 			saved = tr

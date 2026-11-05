@@ -106,3 +106,39 @@ func (mr *MocktxManagerMockRecorder) Do(ctx, fn any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Do", reflect.TypeOf((*MocktxManager)(nil).Do), ctx, fn)
 }
+
+// MocktripCounter is a mock of tripCounter interface.
+type MocktripCounter struct {
+	ctrl     *gomock.Controller
+	recorder *MocktripCounterMockRecorder
+	isgomock struct{}
+}
+
+// MocktripCounterMockRecorder is the mock recorder for MocktripCounter.
+type MocktripCounterMockRecorder struct {
+	mock *MocktripCounter
+}
+
+// NewMocktripCounter creates a new mock instance.
+func NewMocktripCounter(ctrl *gomock.Controller) *MocktripCounter {
+	mock := &MocktripCounter{ctrl: ctrl}
+	mock.recorder = &MocktripCounterMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MocktripCounter) EXPECT() *MocktripCounterMockRecorder {
+	return m.recorder
+}
+
+// Inc mocks base method.
+func (m *MocktripCounter) Inc(ctx context.Context) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Inc", ctx)
+}
+
+// Inc indicates an expected call of Inc.
+func (mr *MocktripCounterMockRecorder) Inc(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Inc", reflect.TypeOf((*MocktripCounter)(nil).Inc), ctx)
+}

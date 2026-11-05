@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -62,15 +61,24 @@ type Observability struct {
 	Propagator     propagation.TextMapPropagator
 }
 
-func New(h Handlers, obs Observability, logger *slog.Logger) http.Handler {
+func New(h Handlers, obs Observability, logger *slog.Logger) (http.Handler, error) {
 	r := chi.NewRouter()
 
 	route := func(req *http.Request) string {
 		return r.Find(chi.NewRouteContext(), req.Method, req.URL.Path)
 	}
 
-	r.Use(chimw.Recoverer)
-	r.Use(middleware.Tracing(obs.TracerProvider, obs.Propagator, route))
+	metrics, err := middleware.Metrics(obs.MeterProvider, route)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(T20): Logging goes between Tracing and Metrics.
+	r.Use(
+		middleware.Recover(logger),
+		middleware.Tracing(obs.TracerProvider, obs.Propagator, route),
+		metrics,
+	)
 
 	return api.HandlerWithOptions(&server{h: h}, api.ChiServerOptions{
 		BaseRouter: r,
@@ -80,5 +88,5 @@ func New(h Handlers, obs Observability, logger *slog.Logger) http.Handler {
 				Reason: "request parameters are invalid",
 			})
 		},
-	})
+	}), nil
 }

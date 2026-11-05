@@ -20,18 +20,20 @@ type Input struct {
 }
 
 type Usecase struct {
-	repo   tripRepository
-	tx     txManager
-	logger *slog.Logger
-	now    func() time.Time
+	repo    tripRepository
+	tx      txManager
+	counter tripCounter
+	logger  *slog.Logger
+	now     func() time.Time
 }
 
-func New(repo tripRepository, tx txManager, logger *slog.Logger, now func() time.Time) *Usecase {
+func New(repo tripRepository, tx txManager, counter tripCounter, logger *slog.Logger, now func() time.Time) *Usecase {
 	return &Usecase{
-		repo:   repo,
-		tx:     tx,
-		logger: logger,
-		now:    now,
+		repo:    repo,
+		tx:      tx,
+		counter: counter,
+		logger:  logger,
+		now:     now,
 	}
 }
 
@@ -70,6 +72,7 @@ func (uc *Usecase) Execute(ctx context.Context, i Input) (*trip.Trip, error) {
 		return nil, err
 	}
 
+	uc.counter.Inc(ctx)
 	uc.logger.InfoContext(ctx, "trip created", "trip_id", t.ID)
 	return t, nil
 }

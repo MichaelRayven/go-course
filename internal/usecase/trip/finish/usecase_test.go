@@ -21,8 +21,9 @@ var (
 )
 
 type mocks struct {
-	repo *MocktripRepository
-	tx   *MocktxManager
+	repo    *MocktripRepository
+	tx      *MocktxManager
+	counter *MocktripCounter
 }
 
 // setup returns the usecase under test and its mocks. The clock always
@@ -32,12 +33,13 @@ func setup(t *testing.T) (*finish.Usecase, mocks) {
 
 	ctrl := gomock.NewController(t)
 	m := mocks{
-		repo: NewMocktripRepository(ctrl),
-		tx:   NewMocktxManager(ctrl),
+		repo:    NewMocktripRepository(ctrl),
+		tx:      NewMocktxManager(ctrl),
+		counter: NewMocktripCounter(ctrl),
 	}
 	now := func() time.Time { return fixed }
 
-	return finish.New(m.repo, m.tx, slog.New(slog.DiscardHandler), now), m
+	return finish.New(m.repo, m.tx, m.counter, slog.New(slog.DiscardHandler), now), m
 }
 
 // runInTx makes the tx mock behave like the real manager: it runs the
@@ -73,6 +75,7 @@ func TestExecuteFinishesActiveTrip(t *testing.T) {
 	tr := activeTrip(t)
 
 	m.runInTx()
+	m.counter.EXPECT().Inc(gomock.Any())
 	m.repo.EXPECT().Fetch(gomock.Any(), tr.ID).Return(tr, nil)
 	m.repo.EXPECT().Finish(gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, saved trip.Trip) error {

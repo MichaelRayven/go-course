@@ -16,3 +16,7 @@ type tripRepository interface {
 type txManager interface {
 	Do(ctx context.Context, fn func(ctx context.Context) error) error
 }
+
+type tripCounter interface {
+	Inc(ctx context.Context)
+}

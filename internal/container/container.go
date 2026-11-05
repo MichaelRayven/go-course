@@ -65,16 +65,28 @@ func New(ctx context.Context, cfg config.Config) (*Container, error) {
 	tripRepository := triprepo.New(pool, cfg.Database.QueryTimeout)
 	now := func() time.Time { return time.Now().UTC() }
 
-	handler := router.New(router.Handlers{
-		Create: createhttp.New(createuc.New(tripRepository, transactionManager, logger, now), logger),
+	tripsCreated, err := telemetry.NewCounter(tel.MeterProvider, "tripgo.trips.created", "Trips created.")
+	if err != nil {
+		return nil, closeAll(ctx, err, pool, tel)
+	}
+	tripsCompleted, err := telemetry.NewCounter(tel.MeterProvider, "tripgo.trips.completed", "Trips completed.")
+	if err != nil {
+		return nil, closeAll(ctx, err, pool, tel)
+	}
+
+	handler, err := router.New(router.Handlers{
+		Create: createhttp.New(createuc.New(tripRepository, transactionManager, tripsCreated, logger, now), logger),
 		Get:    gethttp.New(getuc.New(tripRepository), logger),
-		Finish: finishhttp.New(finishuc.New(tripRepository, transactionManager, logger, now), logger),
+		Finish: finishhttp.New(finishuc.New(tripRepository, transactionManager, tripsCompleted, logger, now), logger),
 		Health: health.New(pool, cfg.Database.QueryTimeout),
 	}, router.Observability{
 		TracerProvider: tel.TracerProvider,
 		MeterProvider:  tel.MeterProvider,
 		Propagator:     tel.Propagator,
 	}, logger)
+	if err != nil {
+		return nil, closeAll(ctx, fmt.Errorf("build router: %w", err), pool, tel)
+	}
 
 	server := &http.Server{
 		Addr:              cfg.HTTP.Addr,
@@ -129,4 +141,9 @@ func newPool(ctx context.Context, cfg config.DatabaseConfig, tel *telemetry.Tele
 func (c *Container) Close(ctx context.Context) error {
 	c.pool.Close()
 	return c.telemetry.Shutdown(ctx)
+}
+
+func closeAll(ctx context.Context, err error, pool *pgxpool.Pool, tel *telemetry.Telemetry) error {
+	pool.Close()
+	return errors.Join(err, tel.Shutdown(context.WithoutCancel(ctx)))
 }
