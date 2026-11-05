@@ -1,3 +1,7 @@
+# Local addresses from `tripgoctl environment start`; ignored if missing.
+-include .env
+export
+
 .PHONY: migrate generate test test-integration run lint fmt
 
 migrate:
