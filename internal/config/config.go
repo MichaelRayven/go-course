@@ -11,6 +11,7 @@ import (
 type Config struct {
 	HTTP            HTTPConfig
 	Database        DatabaseConfig
+	Telemetry       TelemetryConfig
 	LogLevel        string
 	ShutdownTimeout time.Duration
 }
@@ -21,6 +22,10 @@ type HTTPConfig struct {
 	ReadHeaderTimeout time.Duration
 	WriteTimeout      time.Duration
 	IdleTimeout       time.Duration
+}
+
+type TelemetryConfig struct {
+	ServiceName string
 }
 
 type DatabaseConfig struct {
@@ -58,9 +63,15 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	telemetryConfig, err := loadTelemetryConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		HTTP:            httpConfig,
 		Database:        databaseConfig,
+		Telemetry:       telemetryConfig,
 		LogLevel:        logLevel,
 		ShutdownTimeout: shutdownTimeout,
 	}, nil
@@ -144,6 +155,32 @@ func loadDatabaseConfig() (DatabaseConfig, error) {
 		ConnectTimeout:  connectTimeout,
 		QueryTimeout:    queryTimeout,
 	}, nil
+}
+
+// Validates OTEL_* variables for a fail-fast on startup
+func loadTelemetryConfig() (TelemetryConfig, error) {
+	serviceName, err := required("OTEL_SERVICE_NAME")
+	if err != nil {
+		return TelemetryConfig{}, err
+	}
+
+	if _, err := required("OTEL_EXPORTER_OTLP_ENDPOINT"); err != nil {
+		return TelemetryConfig{}, err
+	}
+
+	protocol, err := required("OTEL_EXPORTER_OTLP_PROTOCOL")
+	if err != nil {
+		return TelemetryConfig{}, err
+	}
+	if protocol != "http/protobuf" {
+		return TelemetryConfig{}, fmt.Errorf("OTEL_EXPORTER_OTLP_PROTOCOL must be http/protobuf, got %q", protocol)
+	}
+
+	if _, err := required("OTEL_TRACES_SAMPLER"); err != nil {
+		return TelemetryConfig{}, err
+	}
+
+	return TelemetryConfig{ServiceName: serviceName}, nil
 }
 
 func required(name string) (string, error) {

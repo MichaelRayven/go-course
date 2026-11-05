@@ -33,9 +33,16 @@ func run() error {
 
 	c, err := container.New(appCtx, cfg)
 	if err != nil {
-		return fmt.Errorf("container error: %w", err)
+		return fmt.Errorf("build container: %w", err)
 	}
-	defer c.Close()
+	defer func() {
+		// Runs after the server has stopped: release the pool and flush telemetry.
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancelClose()
+		if err := c.Close(closeCtx); err != nil {
+			c.Logger.Warn("close dependencies", "error", err)
+		}
+	}()
 
 	serverErrors := make(chan error, 1)
 	go func() {
