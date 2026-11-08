@@ -50,12 +50,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("create PostgreSQL pool: %w", err)
 	}
-	defer pool.Close()
 
 	pingCtx, cancelPing := context.WithTimeout(appCtx, cfg.Database.QueryTimeout)
 	err = pool.Ping(pingCtx)
 	cancelPing()
 	if err != nil {
+		pool.Close()
 		return fmt.Errorf("ping PostgreSQL: %w", err)
 	}
 
@@ -81,6 +81,7 @@ func run() error {
 
 	select {
 	case err := <-serverErrors:
+		pool.Close()
 		if !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve HTTP: %w", err)
 		}
@@ -89,11 +90,30 @@ func run() error {
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancelShutdown()
 
-		if err := server.Shutdown(shutdownCtx); err != nil {
+		if err := shutdown(shutdownCtx, server, pool); err != nil {
+			return err
+		}
+		logger.Info("service stopped")
+		return nil
+	}
+}
+
+func shutdown(ctx context.Context, server *http.Server, pool *pgxpool.Pool) error {
+	done := make(chan error, 1)
+	go func() {
+		err := server.Shutdown(ctx)
+		pool.Close()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
 			return fmt.Errorf("shutdown HTTP server: %w", err)
 		}
-		logger.Info("HTTP server stopped")
 		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("shutdown timeout exceeded: %w", ctx.Err())
 	}
 }
 
