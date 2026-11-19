@@ -17,13 +17,17 @@ import (
 	"github.com/MichaelRayven/go-course/internal/http/trip/create"
 	"github.com/MichaelRayven/go-course/internal/http/trip/finish"
 	"github.com/MichaelRayven/go-course/internal/http/trip/get"
+	createpos "github.com/MichaelRayven/go-course/internal/http/trip/position/create"
+	listpos "github.com/MichaelRayven/go-course/internal/http/trip/position/list"
 )
 
 type Handlers struct {
-	Create *create.Handler
-	Get    *get.Handler
-	Finish *finish.Handler
-	Health *health.Handler
+	Create         *create.Handler
+	Get            *get.Handler
+	Finish         *finish.Handler
+	Health         *health.Handler
+	CreatePosition *createpos.Handler
+	ListPositions  *listpos.Handler
 }
 
 // server forwards each generated method to its own handler package.
@@ -45,6 +49,22 @@ func (s *server) GetTrip(w http.ResponseWriter, r *http.Request, tripID api.Trip
 
 func (s *server) FinishTrip(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
 	s.h.Finish.FinishTrip(w, r, tripID)
+}
+
+func (s *server) CreateTripPosition(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
+	if s.h.CreatePosition != nil {
+		s.h.CreatePosition.CreateTripPosition(w, r, tripID)
+		return
+	}
+	s.Unimplemented.CreateTripPosition(w, r, tripID)
+}
+
+func (s *server) ListTripPositions(w http.ResponseWriter, r *http.Request, tripID api.TripId) {
+	if s.h.ListPositions != nil {
+		s.h.ListPositions.ListTripPositions(w, r, tripID)
+		return
+	}
+	s.Unimplemented.ListTripPositions(w, r, tripID)
 }
 
 func (s *server) Health(w http.ResponseWriter, r *http.Request) {

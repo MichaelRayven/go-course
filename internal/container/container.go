@@ -17,6 +17,8 @@ import (
 	createhttp "github.com/MichaelRayven/go-course/internal/http/trip/create"
 	finishhttp "github.com/MichaelRayven/go-course/internal/http/trip/finish"
 	gethttp "github.com/MichaelRayven/go-course/internal/http/trip/get"
+	createposhttp "github.com/MichaelRayven/go-course/internal/http/trip/position/create"
+	listposhttp "github.com/MichaelRayven/go-course/internal/http/trip/position/list"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres"
 	"github.com/MichaelRayven/go-course/internal/infra/postgres/transaction"
 	"github.com/MichaelRayven/go-course/internal/infra/telemetry"
@@ -24,6 +26,8 @@ import (
 	createuc "github.com/MichaelRayven/go-course/internal/usecase/trip/create"
 	finishuc "github.com/MichaelRayven/go-course/internal/usecase/trip/finish"
 	getuc "github.com/MichaelRayven/go-course/internal/usecase/trip/get"
+	createposuc "github.com/MichaelRayven/go-course/internal/usecase/trip/position/create"
+	listposuc "github.com/MichaelRayven/go-course/internal/usecase/trip/position/list"
 )
 
 type Container struct {
@@ -58,12 +62,18 @@ func New(ctx context.Context, cfg config.Config) (*Container, error) {
 	if err != nil {
 		return nil, closeAll(ctx, err, pool, tel)
 	}
+	positionsSaved, err := telemetry.NewCounter(tel.MeterProvider, "tripgo.positions.saved", "Positions saved.")
+	if err != nil {
+		return nil, closeAll(ctx, err, pool, tel)
+	}
 
 	handler, err := router.New(router.Handlers{
-		Create: createhttp.New(createuc.New(tripRepository, transactionManager, tripsCreated, logger, now), logger),
-		Get:    gethttp.New(getuc.New(tripRepository), logger),
-		Finish: finishhttp.New(finishuc.New(tripRepository, transactionManager, tripsCompleted, logger, now), logger),
-		Health: health.New(pool, cfg.Database.QueryTimeout),
+		Create:         createhttp.New(createuc.New(tripRepository, transactionManager, tripsCreated, logger, now), logger),
+		Get:            gethttp.New(getuc.New(tripRepository), logger),
+		Finish:         finishhttp.New(finishuc.New(tripRepository, transactionManager, tripsCompleted, logger, now), logger),
+		Health:         health.New(pool, cfg.Database.QueryTimeout),
+		CreatePosition: createposhttp.New(createposuc.New(tripRepository, transactionManager, nil, positionsSaved, logger, now), logger),
+		ListPositions:  listposhttp.New(listposuc.New(tripRepository), logger),
 	}, router.Observability{
 		TracerProvider: tel.TracerProvider,
 		MeterProvider:  tel.MeterProvider,
