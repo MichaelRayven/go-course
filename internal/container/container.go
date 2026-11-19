@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/MichaelRayven/go-course/internal/config"
+	"github.com/MichaelRayven/go-course/internal/gateway/push"
 	"github.com/MichaelRayven/go-course/internal/http/health"
 	"github.com/MichaelRayven/go-course/internal/http/router"
 	createhttp "github.com/MichaelRayven/go-course/internal/http/trip/create"
@@ -28,13 +30,19 @@ import (
 	getuc "github.com/MichaelRayven/go-course/internal/usecase/trip/get"
 	createposuc "github.com/MichaelRayven/go-course/internal/usecase/trip/position/create"
 	listposuc "github.com/MichaelRayven/go-course/internal/usecase/trip/position/list"
+	positions "github.com/MichaelRayven/go-course/internal/worker/positions"
 )
 
 type Container struct {
-	Server    *http.Server
-	Logger    *slog.Logger
-	pool      *pgxpool.Pool
-	telemetry *telemetry.Telemetry
+	Server        *http.Server
+	Logger        *slog.Logger
+	Scanner       *positions.Scanner
+	PositionsPool *positions.Pool
+	Queue         *positions.Queue
+	PushGateway   *push.Gateway
+	pool          *pgxpool.Pool
+	telemetry     *telemetry.Telemetry
+	closeOnce     sync.Once
 }
 
 func New(ctx context.Context, cfg config.Config) (*Container, error) {
@@ -67,12 +75,52 @@ func New(ctx context.Context, cfg config.Config) (*Container, error) {
 		return nil, closeAll(ctx, err, pool, tel)
 	}
 
+	pushHTTPClient := &http.Client{
+		Timeout: cfg.Push.RequestTimeout,
+	}
+	pushGateway, err := push.New(pushHTTPClient, cfg.Push.URL, tel.TracerProvider, tel.MeterProvider, tel.Propagator)
+	if err != nil {
+		return nil, closeAll(ctx, fmt.Errorf("create push gateway: %w", err), pool, tel)
+	}
+
+	queue, err := positions.NewQueue(cfg.Positions.QueueSize, tel.MeterProvider)
+	if err != nil {
+		return nil, closeAll(ctx, fmt.Errorf("create positions queue: %w", err), pool, tel)
+	}
+
+	positionsPool, err := positions.NewPool(
+		cfg.Positions.Workers,
+		cfg.Push.RequestTimeout,
+		queue,
+		pushGateway,
+		tel.TracerProvider,
+		tel.MeterProvider,
+		logger,
+	)
+	if err != nil {
+		return nil, closeAll(ctx, fmt.Errorf("create positions pool: %w", err), pool, tel)
+	}
+
+	ticker := positions.NewRealTicker(cfg.Positions.CheckInterval)
+	scanner, err := positions.NewScanner(
+		tripRepository,
+		queue,
+		cfg.Positions.StaleAfter,
+		ticker,
+		tel.TracerProvider,
+		logger,
+		now,
+	)
+	if err != nil {
+		return nil, closeAll(ctx, fmt.Errorf("create positions scanner: %w", err), pool, tel)
+	}
+
 	handler, err := router.New(router.Handlers{
 		Create:         createhttp.New(createuc.New(tripRepository, transactionManager, tripsCreated, logger, now), logger),
 		Get:            gethttp.New(getuc.New(tripRepository), logger),
 		Finish:         finishhttp.New(finishuc.New(tripRepository, transactionManager, tripsCompleted, logger, now), logger),
 		Health:         health.New(pool, cfg.Database.QueryTimeout),
-		CreatePosition: createposhttp.New(createposuc.New(tripRepository, transactionManager, nil, positionsSaved, logger, now), logger),
+		CreatePosition: createposhttp.New(createposuc.New(tripRepository, transactionManager, queue, positionsSaved, logger, now), logger),
 		ListPositions:  listposhttp.New(listposuc.New(tripRepository), logger),
 	}, router.Observability{
 		TracerProvider: tel.TracerProvider,
@@ -93,10 +141,14 @@ func New(ctx context.Context, cfg config.Config) (*Container, error) {
 	}
 
 	return &Container{
-		Server:    server,
-		Logger:    logger,
-		pool:      pool,
-		telemetry: tel,
+		Server:        server,
+		Logger:        logger,
+		Scanner:       scanner,
+		PositionsPool: positionsPool,
+		Queue:         queue,
+		PushGateway:   pushGateway,
+		pool:          pool,
+		telemetry:     tel,
 	}, nil
 }
 
@@ -134,8 +186,32 @@ func newPool(ctx context.Context, cfg config.DatabaseConfig, tel *telemetry.Tele
 }
 
 func (c *Container) Close(ctx context.Context) error {
-	c.pool.Close()
-	return c.telemetry.Shutdown(ctx)
+	var errs []error
+	c.closeOnce.Do(func() {
+		if c.PushGateway != nil {
+			if err := c.PushGateway.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if c.pool != nil {
+			poolClosed := make(chan struct{})
+			go func() {
+				c.pool.Close()
+				close(poolClosed)
+			}()
+			select {
+			case <-poolClosed:
+			case <-ctx.Done():
+				errs = append(errs, fmt.Errorf("close database pool: %w", ctx.Err()))
+			}
+		}
+		if c.telemetry != nil {
+			if err := c.telemetry.Shutdown(ctx); err != nil {
+				errs = append(errs, err)
+			}
+		}
+	})
+	return errors.Join(errs...)
 }
 
 func closeAll(ctx context.Context, err error, pool *pgxpool.Pool, tel *telemetry.Telemetry) error {

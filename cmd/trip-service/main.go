@@ -36,13 +36,17 @@ func run() error {
 		return fmt.Errorf("build container: %w", err)
 	}
 	defer func() {
-		// Runs after the server has stopped: release the pool and flush telemetry.
+		// Clean up on early abort/error if shutdown was not run
 		closeCtx, cancelClose := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancelClose()
 		if err := c.Close(closeCtx); err != nil {
 			c.Logger.Warn("close dependencies", "error", err)
 		}
 	}()
+
+	// Start background positions worker pool and scanner
+	c.PositionsPool.Start(appCtx)
+	c.Scanner.Start(appCtx)
 
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -57,15 +61,36 @@ func run() error {
 		}
 		return nil
 	case <-appCtx.Done():
+		c.Logger.Info("initiating graceful shutdown...")
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancelShutdown()
 
+		// Step 1: HTTP server stops accepting new requests and awaits active ones
 		if err := c.Server.Shutdown(shutdownCtx); err != nil {
-			c.Logger.Error("graceful shutdown timed out, forcing close", "error", err)
-			c.Server.Close()
-			return fmt.Errorf("shutdown HTTP server: %w", err)
+			c.Logger.Error("step 1/4: HTTP server graceful shutdown timed out, forcing close", "error", err)
+			_ = c.Server.Close()
+		} else {
+			c.Logger.Info("step 1/4: HTTP server stopped")
 		}
-		c.Logger.Info("HTTP server stopped")
+
+		// Step 2: Scanner stops — no new tasks will be enqueued
+		c.Scanner.Stop()
+		c.Logger.Info("step 2/4: positions scanner stopped")
+
+		// Step 3: Workers drain remaining tasks in queue within shutdown timeout
+		if err := c.PositionsPool.Stop(shutdownCtx); err != nil {
+			c.Logger.Error("step 3/4: positions worker pool drain failed", "error", err)
+		} else {
+			c.Logger.Info("step 3/4: positions worker pool drained and stopped")
+		}
+
+		// Step 4: Close Push client, database pool, and telemetry
+		if err := c.Close(shutdownCtx); err != nil {
+			c.Logger.Error("step 4/4: failed to close database and telemetry", "error", err)
+			return fmt.Errorf("close resources: %w", err)
+		}
+		c.Logger.Info("step 4/4: resources closed, shutdown complete")
+
 		return nil
 	}
 }

@@ -168,6 +168,59 @@ internal_error` с общим текстом, сама ошибка пишетс
 Структуры передаются между слоями по значению, указатель возвращается там, где
 результата может не быть (`*trip.Trip, error`).
 
+## Опрос устаревших поездок (Lab 3)
+
+Сервис принимает координаты активных поездок, хранит маршрут в `trip_positions`
+и периодически запрашивает свежую координату у водителя через Push Service,
+если данные давно не поступали.
+
+```text
+PostgreSQL (trips, trip_positions)
+           |
+           v
+Scanner (time.Ticker) -> FetchStaleTrips()
+           |
+           v
+Queue (dedup map[tripID] + bounded chan Job)
+           |
+           v
+Worker Pool (фиксированное число воркеров)
+           |
+           v
+Push Gateway (HTTP client с таймаутом + W3C traceparent)
+           |
+           v
+Push Service: POST /api/v1/push (REQUEST_POSITION)
+```
+
+- **HTTP API координат:**
+  - `POST /api/v1/trips/{tripId}/positions` — в одной транзакции сохраняет точку в `trip_positions` и обновляет `trips.last_position_at = GREATEST(...)`, после коммита отменяет задачу в очереди (`Queue.Cancel`) и увеличивает `tripgo.positions.saved`.
+  - `GET /api/v1/trips/{tripId}/positions` — возвращает историю координат в порядке `(recorded_at ASC, id ASC)`.
+- **Выборка устаревших поездок:** сканер по тикеру ищет активные поездки с `COALESCE(last_position_at, started_at) < threshold`, используя частичный индекс `trips_stale_active_idx`.
+- **Поведение при переполнении очереди:** очередь ограничена `POSITION_QUEUE_SIZE`. Если буфер заполнен, новая задача не блокирует сканер, а отбрасывается (`dropped`), пишется предупреждение в лог (`Warn`) и инкрементируются метрики `tripgo.stale_checks{result="dropped"}` и `tripgo.position_requests{result="dropped"}`. Поездка попадёт в выборку снова на следующем тике, если координата так и не придёт.
+- **Отмена задачи:** при получении новой координаты `Cancel(tripID)` удаляет поездку из реестра `inFlight` (задача, ждущая в канале, пропускается воркером; уже выполняющийся HTTP-запрос отменяется через `context.CancelFunc`).
+- **Сознательные упрощения:**
+  1. Выборка идёт без `LIMIT` (при десятках тысяч поездок в проде нужна keyset-пагинация батчами).
+  2. Очередь построена на FIFO-канале, а не на приоритетной куче (`container/heap`).
+  3. Время последнего пуша в БД не сохраняется: повторный запрос возможен на следующем тике сканера.
+- **Конфигурация:**
+  - `POSITION_CHECK_INTERVAL` (`30s`) — интервал сканирования БД;
+  - `POSITION_STALE_AFTER` (`60s`) — порог устаревания координаты;
+  - `POSITION_WORKERS` (`4`) — число воркеров пула;
+  - `POSITION_QUEUE_SIZE` (`100`) — ёмкость буфера очереди;
+  - `PUSH_HTTP_URL` — базовый URL Push Service;
+  - `PUSH_REQUEST_TIMEOUT` (`1s`) — таймаут одного HTTP-запроса;
+  - `SHUTDOWN_TIMEOUT` (`10s`) — общий бюджет корректного завершения (HTTP -> Scanner -> Worker Pool -> Push Client / DB Pool / Telemetry).
+- **Телеметрия:** метрики `tripgo.positions.saved`, `tripgo.stale_checks{result}`, `tripgo.position_requests.queue.size`, `tripgo.position_requests.workers.active`, `tripgo.position_requests{result}`, `tripgo.position_requests.duration`; спан воркера связан со спаном сканирования через span link.
+- **Проверка:**
+
+```bash
+go test -race -count=1 ./...
+go test -tags=integration -race ./internal/repository/trip/...
+```
+
+Утечки горутин в `internal/worker/positions` проверяются через `goleak.VerifyTestMain`.
+
 ## Содержимое курса
 
 | Что | Где |
