@@ -12,8 +12,21 @@ type Config struct {
 	HTTP            HTTPConfig
 	Database        DatabaseConfig
 	Telemetry       TelemetryConfig
+	Positions       PositionsConfig
+	Push            PushConfig
 	LogLevel        string
 	ShutdownTimeout time.Duration
+}
+
+type PositionsConfig struct {
+	CheckInterval time.Duration
+	StaleAfter    time.Duration
+	Workers       int
+	QueueSize     int
+}
+type PushConfig struct {
+	URL            string
+	RequestTimeout time.Duration
 }
 
 type HTTPConfig struct {
@@ -68,12 +81,75 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	positionsConfig, err := loadPositionsConfig()
+	if err != nil {
+		return Config{}, err
+	}
+	pushConfig, err := loadPushConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		HTTP:            httpConfig,
 		Database:        databaseConfig,
 		Telemetry:       telemetryConfig,
+		Positions:       positionsConfig,
+		Push:            pushConfig,
 		LogLevel:        logLevel,
 		ShutdownTimeout: shutdownTimeout,
+	}, nil
+}
+
+func loadPositionsConfig() (PositionsConfig, error) {
+	checkInterval, err := positiveDuration("POSITION_CHECK_INTERVAL")
+	if err != nil {
+		return PositionsConfig{}, err
+	}
+
+	staleAfter, err := positiveDuration("POSITION_STALE_AFTER")
+	if err != nil {
+		return PositionsConfig{}, err
+	}
+
+	workers, err := parseInt("POSITION_WORKERS")
+	if err != nil {
+		return PositionsConfig{}, err
+	}
+	if workers <= 0 {
+		return PositionsConfig{}, fmt.Errorf("POSITION_WORKERS must be greater than zero, got %d", workers)
+	}
+
+	queueSize, err := parseInt("POSITION_QUEUE_SIZE")
+	if err != nil {
+		return PositionsConfig{}, err
+	}
+	if queueSize <= 0 {
+		return PositionsConfig{}, fmt.Errorf("POSITION_QUEUE_SIZE must be greater than zero, got %d", queueSize)
+	}
+
+	return PositionsConfig{
+		CheckInterval: checkInterval,
+		StaleAfter:    staleAfter,
+		Workers:       workers,
+		QueueSize:     queueSize,
+	}, nil
+}
+
+func loadPushConfig() (PushConfig, error) {
+	url, err := required("PUSH_HTTP_URL")
+	if err != nil {
+		return PushConfig{}, err
+	}
+
+	timeout, err := positiveDuration("PUSH_REQUEST_TIMEOUT")
+	if err != nil {
+		return PushConfig{}, err
+	}
+
+	return PushConfig{
+		URL:            url,
+		RequestTimeout: timeout,
 	}, nil
 }
 
@@ -221,6 +297,18 @@ func parseInt32(name string) (int32, error) {
 	}
 
 	return int32(number), nil
+}
+
+func parseInt(name string) (int, error) {
+	value, err := required(name)
+	if err != nil {
+		return 0, err
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid integer: %w", name, err)
+	}
+	return number, nil
 }
 
 func parseLogLevel() (string, error) {
