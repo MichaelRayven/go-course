@@ -85,3 +85,10 @@ func (t *Trip) Finish(at time.Time) error {
 	t.FinishedAt = &at
 	return nil
 }
+
+func (t *Trip) CanAcceptPositions() error {
+	if t.Status != StatusActive {
+		return ErrTripCompleted
+	}
+	return nil
+}
