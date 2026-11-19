@@ -239,3 +239,200 @@ func TestAddStatusHistory(t *testing.T) {
 		t.Errorf("history rows = %d, want 1", n)
 	}
 }
+
+func TestAddPositionAndFetchPositions(t *testing.T) {
+	ctx := context.Background()
+	pool := newPool(t)
+	repo := triprepo.New(pool, queryTimeout)
+	tr := newTrip(t, pool)
+
+	if err := repo.Save(ctx, *tr); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	p1Time := tr.StartedAt.Add(10 * time.Second)
+	pos1, err := trip.NewPosition(tr.ID, trip.Coordinates{Latitude: 59.93, Longitude: 30.33}, p1Time, p1Time)
+	if err != nil {
+		t.Fatalf("NewPosition: %v", err)
+	}
+	saved1, err := repo.AddPosition(ctx, *pos1)
+	if err != nil {
+		t.Fatalf("AddPosition 1: %v", err)
+	}
+	if saved1.ID == 0 {
+		t.Errorf("expected positive ID, got %d", saved1.ID)
+	}
+
+	p2Time := tr.StartedAt.Add(20 * time.Second)
+	pos2, err := trip.NewPosition(tr.ID, trip.Coordinates{Latitude: 59.94, Longitude: 30.34}, p2Time, p2Time)
+	if err != nil {
+		t.Fatalf("NewPosition: %v", err)
+	}
+	saved2, err := repo.AddPosition(ctx, *pos2)
+	if err != nil {
+		t.Fatalf("AddPosition 2: %v", err)
+	}
+
+	positions, err := repo.FetchPositions(ctx, tr.ID)
+	if err != nil {
+		t.Fatalf("FetchPositions: %v", err)
+	}
+	if len(positions) != 2 {
+		t.Fatalf("expected 2 positions, got %d", len(positions))
+	}
+	if positions[0].ID != saved1.ID || positions[1].ID != saved2.ID {
+		t.Errorf("positions order mismatch: got %+v", positions)
+	}
+
+	fetchedTrip, err := repo.Fetch(ctx, tr.ID)
+	if err != nil {
+		t.Fatalf("Fetch trip: %v", err)
+	}
+	if fetchedTrip.LastPositionAt == nil || !fetchedTrip.LastPositionAt.Equal(p2Time) {
+		t.Errorf("expected last_position_at %v, got %v", p2Time, fetchedTrip.LastPositionAt)
+	}
+}
+
+func TestAddPositionOutOfOrderProtection(t *testing.T) {
+	ctx := context.Background()
+	pool := newPool(t)
+	repo := triprepo.New(pool, queryTimeout)
+	tr := newTrip(t, pool)
+
+	if err := repo.Save(ctx, *tr); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	newerTime := tr.StartedAt.Add(30 * time.Second)
+	newerPos, err := trip.NewPosition(tr.ID, trip.Coordinates{Latitude: 59.95, Longitude: 30.35}, newerTime, newerTime)
+	if err != nil {
+		t.Fatalf("NewPosition: %v", err)
+	}
+	if _, err := repo.AddPosition(ctx, *newerPos); err != nil {
+		t.Fatalf("AddPosition newer: %v", err)
+	}
+
+	olderTime := tr.StartedAt.Add(10 * time.Second)
+	olderPos, err := trip.NewPosition(tr.ID, trip.Coordinates{Latitude: 59.91, Longitude: 30.31}, olderTime, newerTime)
+	if err != nil {
+		t.Fatalf("NewPosition: %v", err)
+	}
+	if _, err := repo.AddPosition(ctx, *olderPos); err != nil {
+		t.Fatalf("AddPosition older: %v", err)
+	}
+
+	fetchedTrip, err := repo.Fetch(ctx, tr.ID)
+	if err != nil {
+		t.Fatalf("Fetch trip: %v", err)
+	}
+	if fetchedTrip.LastPositionAt == nil || !fetchedTrip.LastPositionAt.Equal(newerTime) {
+		t.Errorf("out-of-order protection failed: last_position_at is %v, want %v", fetchedTrip.LastPositionAt, newerTime)
+	}
+}
+
+func TestAddPositionRollback(t *testing.T) {
+	ctx := context.Background()
+	pool := newPool(t)
+	repo := triprepo.New(pool, queryTimeout)
+	txm := transaction.NewTransactionManager(pool, queryTimeout)
+	tr := newTrip(t, pool)
+
+	if err := repo.Save(ctx, *tr); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	posTime := tr.StartedAt.Add(10 * time.Second)
+	pos, err := trip.NewPosition(tr.ID, trip.Coordinates{Latitude: 59.93, Longitude: 30.33}, posTime, posTime)
+	if err != nil {
+		t.Fatalf("NewPosition: %v", err)
+	}
+
+	err = txm.Do(ctx, func(txCtx context.Context) error {
+		if _, err := repo.AddPosition(txCtx, *pos); err != nil {
+			return err
+		}
+		return errors.New("simulated error")
+	})
+	if err == nil {
+		t.Fatal("expected transaction error, got nil")
+	}
+
+	positions, err := repo.FetchPositions(ctx, tr.ID)
+	if err != nil {
+		t.Fatalf("FetchPositions: %v", err)
+	}
+	if len(positions) != 0 {
+		t.Errorf("positions after rollback = %d, want 0", len(positions))
+	}
+
+	fetchedTrip, err := repo.Fetch(ctx, tr.ID)
+	if err != nil {
+		t.Fatalf("Fetch trip: %v", err)
+	}
+	if fetchedTrip.LastPositionAt != nil {
+		t.Errorf("last_position_at after rollback = %v, want nil", fetchedTrip.LastPositionAt)
+	}
+}
+
+func TestFetchStaleTrips(t *testing.T) {
+	ctx := context.Background()
+	pool := newPool(t)
+	repo := triprepo.New(pool, queryTimeout)
+
+	baseTime := time.Now().UTC().Truncate(time.Microsecond).Add(-10 * time.Minute)
+
+	staleTrip := newTrip(t, pool)
+	staleTrip.StartedAt = baseTime
+	if err := repo.Save(ctx, *staleTrip); err != nil {
+		t.Fatalf("Save staleTrip: %v", err)
+	}
+
+	freshTrip := newTrip(t, pool)
+	freshTrip.StartedAt = baseTime
+	if err := repo.Save(ctx, *freshTrip); err != nil {
+		t.Fatalf("Save freshTrip: %v", err)
+	}
+	freshPosTime := time.Now().UTC().Add(-5 * time.Second)
+	freshPos, err := trip.NewPosition(freshTrip.ID, trip.Coordinates{Latitude: 50, Longitude: 30}, freshPosTime, freshPosTime)
+	if err != nil {
+		t.Fatalf("NewPosition: %v", err)
+	}
+	if _, err := repo.AddPosition(ctx, *freshPos); err != nil {
+		t.Fatalf("AddPosition freshPos: %v", err)
+	}
+
+	completedTrip := newTrip(t, pool)
+	completedTrip.StartedAt = baseTime
+	if err := repo.Save(ctx, *completedTrip); err != nil {
+		t.Fatalf("Save completedTrip: %v", err)
+	}
+	if err := completedTrip.Finish(baseTime.Add(2 * time.Minute)); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	if err := repo.Finish(ctx, *completedTrip); err != nil {
+		t.Fatalf("repo Finish: %v", err)
+	}
+
+	threshold := time.Now().UTC().Add(-1 * time.Minute)
+	staleList, err := repo.FetchStaleTrips(ctx, threshold, 100)
+	if err != nil {
+		t.Fatalf("FetchStaleTrips: %v", err)
+	}
+
+	foundStale := false
+	for _, s := range staleList {
+		if s.ID == staleTrip.ID {
+			foundStale = true
+		}
+		if s.ID == freshTrip.ID {
+			t.Errorf("fresh trip %v was unexpectedly returned by FetchStaleTrips", s.ID)
+		}
+		if s.ID == completedTrip.ID {
+			t.Errorf("completed trip %v was unexpectedly returned by FetchStaleTrips", s.ID)
+		}
+	}
+
+	if !foundStale {
+		t.Errorf("stale trip %v was not found in FetchStaleTrips result", staleTrip.ID)
+	}
+}

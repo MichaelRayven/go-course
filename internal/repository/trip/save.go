@@ -114,3 +114,49 @@ func (r *Repository) AddStatusHistory(ctx context.Context, change trip.StatusCha
 
 	return nil
 }
+
+func (r *Repository) AddPosition(ctx context.Context, pos trip.Position) (*trip.Position, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, r.queryTimeout)
+	defer cancel()
+
+	executor := postgres.ExecutorFromContext(queryCtx, r.pool)
+
+	insertQuery, args, err := squirrel.Insert("trip_positions").
+		Columns("trip_id", "latitude", "longitude", "recorded_at", "created_at").
+		Values(pos.TripID, pos.Coordinates.Latitude, pos.Coordinates.Longitude, pos.RecordedAt, pos.CreatedAt).
+		Suffix("RETURNING id").
+		PlaceholderFormat(squirrel.Dollar).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build insert trip position query: %w", err)
+	}
+
+	var id int64
+	if err := executor.QueryRow(queryCtx, insertQuery, args...).Scan(&id); err != nil {
+		return nil, fmt.Errorf("insert trip position: %w", err)
+	}
+
+	updateQuery, args, err := squirrel.Update("trips").
+		Set("last_position_at", squirrel.Expr("CASE WHEN last_position_at IS NULL THEN ? ELSE GREATEST(last_position_at, ?) END", pos.RecordedAt, pos.RecordedAt)).
+		Set("updated_at", squirrel.Expr("now()")).
+		Where(squirrel.Eq{
+			"id":     pos.TripID,
+			"status": trip.StatusActive,
+		}).
+		PlaceholderFormat(squirrel.Dollar).
+		ToSql()
+	if err != nil {
+		return nil, fmt.Errorf("build update trip last_position_at query: %w", err)
+	}
+
+	tag, err := executor.Exec(queryCtx, updateQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("update trip last_position_at: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, trip.ErrTripCompleted
+	}
+
+	pos.ID = id
+	return &pos, nil
+}
