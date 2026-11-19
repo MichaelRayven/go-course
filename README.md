@@ -4,35 +4,49 @@
 работ: каждая следующая продолжает предыдущую, переписывать сервис с нуля не
 нужно.
 
-## Trip Service: лабораторная работа 1
+## Trip Service
 
 ### Запуск
 
-Понадобятся Go, `make` и установленный `tripgoctl`.
-Локальное окружение поднимает PostgreSQL и создаёт `.env` с актуальным адресом:
+Понадобятся Go, `make` и установленный [`tripgoctl`](https://github.com/course-go-autumn-2026/course-infra).
+Локальное окружение поднимает PostgreSQL и коллектор телеметрии (Jaeger,
+Prometheus, Grafana) и создаёт `.env` с актуальными адресами:
 
 ```bash
 tripgoctl cluster start
 tripgoctl environment start
-
-set -a
-source .env
-set +a
+tripgoctl connect        # ссылки на Jaeger, Grafana, Prometheus
 
 make migrate
 make run
 ```
 
-Перед запуском должны быть заданы все переменные из `.env.example`, включая таймауты HTTP сервера, которые нужно задать вручную в `.env`.  
-  
-Основные команды:
+`Makefile` подхватывает `.env` сам. `tripgoctl` не пишет в `.env` таймауты
+HTTP-сервера (`HTTP_*_TIMEOUT`), их нужно добавить вручную, значения есть в
+`.env.example`. Без любой обязательной переменной сервис не стартует и пишет,
+какой не хватает.
+
 ```bash
-make generate  # повторно сгенерировать Go-типы и chi-сервер из OpenAPI
-make migrate   # применить миграции к DATABASE_URL
-make test      # выполнить все тесты
-make lint      # golangci-lint (с лабораторной работы 2)
-make run       # запустить trip-service
+make generate          # код по OpenAPI и моки (go generate)
+make migrate           # миграции в DATABASE_URL
+make run               # запустить trip-service
+make lint              # golangci-lint, конфиг в .golangci.yml
+make fmt               # gofumpt + gci
+make test              # unit-тесты с -race, печатает покрытие domain + usecase
+make test-integration  # тесты репозитория на PostgreSQL из tripgoctl
 ```
+
+### Тесты
+
+- `make test` гоняет все unit-тесты с `-race` и печатает итоговое покрытие
+  пакетов `internal/domain/...` и `internal/usecase/...`. Внешние зависимости
+  в них только моки `gomock`, сгенерированные `go:generate` в `mocks_test.go`.
+- `make test-integration` запускает тесты с билд-тегом `integration` против
+  базы из `tripgoctl environment start` (адрес берётся из `DATABASE_URL`).
+  Каждый тест создаёт поездки со своими ID и удаляет их после себя, поэтому
+  тесты независимы и проходят повторно (`-count=2`). Среди них тест на откат:
+  `INSERT` в `trips` проходит, `INSERT` в `trip_status_history` отклоняет
+  `CHECK`-ограничение базы, и после `ROLLBACK` нет ни одной из двух строк.
 
 ### Переменные окружения
 
@@ -51,6 +65,73 @@ make run       # запустить trip-service
 | `DATABASE_QUERY_TIMEOUT` | таймаут запросов и транзакций |
 | `SHUTDOWN_TIMEOUT` | таймаут graceful shutdown |
 | `LOG_LEVEL` | минимальный уровень JSON-логов (`debug`, `info`, `warn`, `error`) |
+| `OTEL_SERVICE_NAME` | `service.name` в трейсах и метриках |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | адрес коллектора |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | только `http/protobuf` |
+| `OTEL_RESOURCE_ATTRIBUTES` | `service.namespace`, `deployment.environment` |
+| `OTEL_TRACES_SAMPLER` | сэмплер трейсов, например `parentbased_always_on` |
+
+### Архитектура
+
+Зависимости направлены внутрь: транспорт и репозиторий знают про usecase,
+usecase знает про домен, домен не знает ни про кого.
+
+| Слой | Пакеты | Что делает | Что не импортирует |
+|---|---|---|---|
+| домен | `domain/trip` | `Trip`, `New` с валидацией, `Finish`, доменные ошибки | ничего кроме stdlib и `uuid` |
+| usecase | `usecase/trip/{create,get,finish}` | один сценарий на пакет, границы транзакции, бизнес-логи и счётчики | `net/http`, `chi`, `pgx`, `squirrel`, `generated` |
+| транспорт | `http/trip/{create,get,finish}`, `http/health`, `http/domainerror`, `http/middleware`, `http/router` | разбор запроса, ответ, маппинг ошибок, middleware | `repository`, `infra` |
+| данные | `repository/trip` | SQL через squirrel, перевод ошибок PostgreSQL в доменные | транспорт |
+| инфраструктура | `infra/postgres`, `infra/telemetry` | пул, транзакции, OpenTelemetry, логгер | — |
+
+Правила проверяет `depguard` в `.golangci.yml`, поэтому нарушение слоя
+ломает `make lint`.
+
+Все зависимости создаются и связываются в `internal/container`: это
+единственное место, где встречаются `pgxpool.New` и конструкторы
+репозиториев. `cmd/trip-service/main.go` читает конфигурацию, вызывает
+`container.New`, запускает сервер и ждёт сигнала остановки.
+
+**Где объявлены интерфейсы и почему.** Интерфейсы объявляет потребитель, в
+`contract.go` своего пакета, и они неэкспортируемые: `usecase/trip/finish`
+объявляет `tripRepository` ровно с теми тремя методами, которые вызывает, и
+`txManager` с одним `Do`. Реализация (`repository/trip.Repository`) ничего про
+эти интерфейсы не знает, в Go они удовлетворяются неявно. Так usecase
+формулирует, что ему нужно, интерфейсы остаются узкими, моки генерируются по
+одному файлу, а реализацию можно заменить, не трогая usecase. Тем же правилом
+хендлеры объявляют интерфейс своего usecase, а usecase объявляет
+`tripCounter` вместо зависимости от OpenTelemetry.
+
+**Отступления от раскладки задания.** Общий пакет `internal/model` не
+понадобился: вход сценария создания, `create.Input`, нужен только usecase
+`create` и его хендлеру, поэтому лежит в самом usecase. Поездку между слоями
+передаёт доменный `trip.Trip`. Ответы и ошибки HTTP пишет пакет
+`http/respond`, чтобы не дублировать это в каждой ручке.
+
+### Observability
+
+- **Трейсы.** Middleware `Tracing` (`otelhttp`) создаёт корневой спан
+  `{method} {http.route}`, например `POST /api/v1/trips`. Каждый запрос в базу
+  даёт дочерний спан с `db.operation.name` и `db.collection.name`: трейсер
+  повешен на пул pgx (`infra/postgres/tracer.go` поверх `otelpgx`), репозиторий
+  про телеметрию не знает. Ответ 5xx и ошибка запроса в базу помечают спан
+  `codes.Error` и `error.type`.
+- **Метрики.** `http.server.request.duration`,
+  `http.server.active_requests`, `db.client.operation.duration`,
+  `tripgo.trips.created`, `tripgo.trips.completed`. В `http.route` всегда
+  шаблон маршрута: с подставленным `tripId` каждая поездка заводила бы свою
+  временную серию.
+- **Логи.** `slog`, JSON в stdout. Обработчик в `infra/telemetry/log.go`
+  добавляет в запись `trace_id` и `span_id`, если в контексте есть спан, так
+  по `trace_id` из лога находится трейс в Jaeger. Логгер передаётся
+  зависимостью.
+- **Middleware**: `Recover → Tracing → Logging → Metrics → роутер`. `Logging`
+  стоит внутри `Tracing`, поэтому его запись `request handled` уже видит спан
+  запроса. Уровень `Info` для 2xx и 4xx, `Error` для 5xx, тела не логируются.
+- Провайдеры OpenTelemetry передаются зависимостями, глобальные
+  `otel.SetTracerProvider` не используются. Если коллектор недоступен,
+  экспорт падает в фоне с предупреждением в логе, запросы обслуживаются как
+  обычно.
 
 ### Решения
 
@@ -71,9 +152,74 @@ make run       # запустить trip-service
 уникальным индексом по `driver_id WHERE status = 'active'`; нарушение индекса
 распознаётся по PostgreSQL-коду `23505` и возвращается как `409 driver_busy`.
 
-Завершение поездки использует один условный `UPDATE` с `status = 'active'`.
-Поэтому два конкурентных запроса не могут оба завершить поездку: один обновляет
-строку, второй получает ноль строк и возвращает `409 trip_completed`.
+Завершение поездки: usecase загружает поездку, доменный `Trip.Finish` проверяет
+переход статуса, репозиторий сохраняет результат условным `UPDATE ... WHERE
+status = 'active'`. Доменное правило даёт понятную ошибку, а условие в `UPDATE`
+защищает от гонки: из двух одновременных запросов второй получает ноль строк и
+`409 trip_completed`.
+
+Ошибки домена объявлены в `domain/trip/errors.go`, ошибки валидации несут поле
+и причину (`*trip.ValidationError`). Перевод в HTTP собран в одном месте,
+`http/domainerror.Problem`. Любая неизвестная ошибка становится `500
+internal_error` с общим текстом, сама ошибка пишется в лог один раз. Ошибка
+`ErrFinishBeforeStart` тоже даёт 500: время завершения выставляет сервер, и
+клиент не может её вызвать.
+
+Структуры передаются между слоями по значению, указатель возвращается там, где
+результата может не быть (`*trip.Trip, error`).
+
+## Опрос устаревших поездок (Lab 3)
+
+Сервис принимает координаты активных поездок, хранит маршрут в `trip_positions`
+и периодически запрашивает свежую координату у водителя через Push Service,
+если данные давно не поступали.
+
+```text
+PostgreSQL (trips, trip_positions)
+           |
+           v
+Scanner (time.Ticker) -> FetchStaleTrips()
+           |
+           v
+Queue (dedup map[tripID] + bounded chan Job)
+           |
+           v
+Worker Pool (фиксированное число воркеров)
+           |
+           v
+Push Gateway (HTTP client с таймаутом + W3C traceparent)
+           |
+           v
+Push Service: POST /api/v1/push (REQUEST_POSITION)
+```
+
+- **HTTP API координат:**
+  - `POST /api/v1/trips/{tripId}/positions` — в одной транзакции сохраняет точку в `trip_positions` и обновляет `trips.last_position_at = GREATEST(...)`, после коммита отменяет задачу в очереди (`Queue.Cancel`) и увеличивает `tripgo.positions.saved`.
+  - `GET /api/v1/trips/{tripId}/positions` — возвращает историю координат в порядке `(recorded_at ASC, id ASC)`.
+- **Выборка устаревших поездок:** сканер по тикеру ищет активные поездки с `COALESCE(last_position_at, started_at) < threshold`, используя частичный индекс `trips_stale_active_idx`.
+- **Поведение при переполнении очереди:** очередь ограничена `POSITION_QUEUE_SIZE`. Если буфер заполнен, новая задача не блокирует сканер, а отбрасывается (`dropped`), пишется предупреждение в лог (`Warn`) и инкрементируются метрики `tripgo.stale_checks{result="dropped"}` и `tripgo.position_requests{result="dropped"}`. Поездка попадёт в выборку снова на следующем тике, если координата так и не придёт.
+- **Отмена задачи:** при получении новой координаты `Cancel(tripID)` удаляет поездку из реестра `inFlight` (задача, ждущая в канале, пропускается воркером; уже выполняющийся HTTP-запрос отменяется через `context.CancelFunc`).
+- **Сознательные упрощения:**
+  1. Выборка идёт без `LIMIT` (при десятках тысяч поездок в проде нужна keyset-пагинация батчами).
+  2. Очередь построена на FIFO-канале, а не на приоритетной куче (`container/heap`).
+  3. Время последнего пуша в БД не сохраняется: повторный запрос возможен на следующем тике сканера.
+- **Конфигурация:**
+  - `POSITION_CHECK_INTERVAL` (`30s`) — интервал сканирования БД;
+  - `POSITION_STALE_AFTER` (`60s`) — порог устаревания координаты;
+  - `POSITION_WORKERS` (`4`) — число воркеров пула;
+  - `POSITION_QUEUE_SIZE` (`100`) — ёмкость буфера очереди;
+  - `PUSH_HTTP_URL` — базовый URL Push Service;
+  - `PUSH_REQUEST_TIMEOUT` (`1s`) — таймаут одного HTTP-запроса;
+  - `SHUTDOWN_TIMEOUT` (`10s`) — общий бюджет корректного завершения (HTTP -> Scanner -> Worker Pool -> Push Client / DB Pool / Telemetry).
+- **Телеметрия:** метрики `tripgo.positions.saved`, `tripgo.stale_checks{result}`, `tripgo.position_requests.queue.size`, `tripgo.position_requests.workers.active`, `tripgo.position_requests{result}`, `tripgo.position_requests.duration`; спан воркера связан со спаном сканирования через span link.
+- **Проверка:**
+
+```bash
+go test -race -count=1 ./...
+go test -tags=integration -race ./internal/repository/trip/...
+```
+
+Утечки горутин в `internal/worker/positions` проверяются через `goleak.VerifyTestMain`.
 
 ## Содержимое курса
 

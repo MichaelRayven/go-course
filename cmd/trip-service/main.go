@@ -11,11 +11,7 @@ import (
 	"syscall"
 
 	"github.com/MichaelRayven/go-course/internal/config"
-	"github.com/MichaelRayven/go-course/internal/db"
-	handler "github.com/MichaelRayven/go-course/internal/handler"
-	"github.com/MichaelRayven/go-course/internal/repository"
-	"github.com/MichaelRayven/go-course/internal/service"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/MichaelRayven/go-course/internal/container"
 )
 
 func main() {
@@ -32,102 +28,66 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	logger := newLogger(cfg.LogLevel)
-
 	appCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	poolConfig, err := pgxpool.ParseConfig(cfg.Database.URL)
+	c, err := container.New(appCtx, cfg)
 	if err != nil {
-		return fmt.Errorf("parse PostgreSQL pool config: %w", err)
+		return fmt.Errorf("build container: %w", err)
 	}
-	poolConfig.MaxConns = cfg.Database.MaxConns
-	poolConfig.MinConns = cfg.Database.MinConns
-	poolConfig.MaxConnLifetime = cfg.Database.MaxConnLifetime
-	poolConfig.ConnConfig.ConnectTimeout = cfg.Database.ConnectTimeout
+	defer func() {
+		// Clean up on early abort/error if shutdown was not run
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		defer cancelClose()
+		if err := c.Close(closeCtx); err != nil {
+			c.Logger.Warn("close dependencies", "error", err)
+		}
+	}()
 
-	pool, err := pgxpool.NewWithConfig(appCtx, poolConfig)
-	if err != nil {
-		return fmt.Errorf("create PostgreSQL pool: %w", err)
-	}
-
-	pingCtx, cancelPing := context.WithTimeout(appCtx, cfg.Database.QueryTimeout)
-	err = pool.Ping(pingCtx)
-	cancelPing()
-	if err != nil {
-		pool.Close()
-		return fmt.Errorf("ping PostgreSQL: %w", err)
-	}
-
-	transactionManager := db.NewTransactionManager(pool, cfg.Database.QueryTimeout)
-	tripRepository := repository.NewTripRepository(pool, cfg.Database.QueryTimeout)
-	tripService := service.NewTripService(tripRepository, transactionManager)
-
-	httpHandler := handler.NewHTTPHandler(pool, tripService, cfg.Database.QueryTimeout, logger)
-	server := &http.Server{
-		Addr:              cfg.HTTP.Addr,
-		Handler:           httpHandler.Routes(),
-		ReadTimeout:       cfg.HTTP.ReadTimeout,
-		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
-		WriteTimeout:      cfg.HTTP.WriteTimeout,
-		IdleTimeout:       cfg.HTTP.IdleTimeout,
-	}
+	// Start background positions worker pool and scanner.
+	// Pool uses Background so it can drain queued tasks during ShutdownTimeout after appCtx is cancelled.
+	c.PositionsPool.Start(context.Background())
+	c.Scanner.Start(appCtx)
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("HTTP server is listening", "address", cfg.HTTP.Addr)
-		serverErrors <- server.ListenAndServe()
+		c.Logger.Info("HTTP server is listening", "address", cfg.HTTP.Addr)
+		serverErrors <- c.Server.ListenAndServe()
 	}()
 
 	select {
 	case err := <-serverErrors:
-		pool.Close()
 		if !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("serve HTTP: %w", err)
 		}
 		return nil
 	case <-appCtx.Done():
+		c.Logger.Info("initiating graceful shutdown")
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancelShutdown()
 
-		if err := shutdown(shutdownCtx, server, pool); err != nil {
-			return err
+		if err := c.Server.Shutdown(shutdownCtx); err != nil {
+			c.Logger.Error("HTTP server graceful shutdown timed out, forcing close", "error", err)
+			_ = c.Server.Close()
+		} else {
+			c.Logger.Info("HTTP server stopped")
 		}
-		logger.Info("service stopped")
+
+		c.Scanner.Stop()
+		c.Logger.Info("positions scanner stopped")
+
+		if err := c.PositionsPool.Stop(shutdownCtx); err != nil {
+			c.Logger.Error("positions worker pool drain failed", "error", err)
+		} else {
+			c.Logger.Info("positions worker pool stopped")
+		}
+
+		if err := c.Close(shutdownCtx); err != nil {
+			c.Logger.Error("failed to close resources", "error", err)
+			return fmt.Errorf("close resources: %w", err)
+		}
+		c.Logger.Info("shutdown complete")
+
 		return nil
 	}
-}
-
-func shutdown(ctx context.Context, server *http.Server, pool *pgxpool.Pool) error {
-	done := make(chan error, 1)
-	go func() {
-		err := server.Shutdown(ctx)
-		pool.Close()
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("shutdown HTTP server: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("shutdown timeout exceeded: %w", ctx.Err())
-	}
-}
-
-func newLogger(levelName string) *slog.Logger {
-	level := slog.LevelInfo
-	switch levelName {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-	return slog.New(handler).With("service", "trip-service")
 }
