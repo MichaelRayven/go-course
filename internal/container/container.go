@@ -193,17 +193,8 @@ func (c *Container) Close(ctx context.Context) error {
 				errs = append(errs, err)
 			}
 		}
-		if c.pool != nil {
-			poolClosed := make(chan struct{})
-			go func() {
-				c.pool.Close()
-				close(poolClosed)
-			}()
-			select {
-			case <-poolClosed:
-			case <-ctx.Done():
-				errs = append(errs, fmt.Errorf("close database pool: %w", ctx.Err()))
-			}
+		if err := ClosePool(ctx, c.pool); err != nil {
+			errs = append(errs, err)
 		}
 		if c.telemetry != nil {
 			if err := c.telemetry.Shutdown(ctx); err != nil {
@@ -212,6 +203,24 @@ func (c *Container) Close(ctx context.Context) error {
 		}
 	})
 	return errors.Join(errs...)
+}
+
+// ClosePool closes the PostgreSQL pool within the provided context budget.
+func ClosePool(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return nil
+	}
+	poolClosed := make(chan struct{})
+	go func() {
+		pool.Close()
+		close(poolClosed)
+	}()
+	select {
+	case <-poolClosed:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("close database pool: %w", ctx.Err())
+	}
 }
 
 func closeAll(ctx context.Context, err error, pool *pgxpool.Pool, tel *telemetry.Telemetry) error {

@@ -44,8 +44,9 @@ func run() error {
 		}
 	}()
 
-	// Start background positions worker pool and scanner
-	c.PositionsPool.Start(appCtx)
+	// Start background positions worker pool and scanner.
+	// Pool uses Background so it can drain queued tasks during ShutdownTimeout after appCtx is cancelled.
+	c.PositionsPool.Start(context.Background())
 	c.Scanner.Start(appCtx)
 
 	serverErrors := make(chan error, 1)
@@ -61,35 +62,31 @@ func run() error {
 		}
 		return nil
 	case <-appCtx.Done():
-		c.Logger.Info("initiating graceful shutdown...")
+		c.Logger.Info("initiating graceful shutdown")
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 		defer cancelShutdown()
 
-		// Step 1: HTTP server stops accepting new requests and awaits active ones
 		if err := c.Server.Shutdown(shutdownCtx); err != nil {
-			c.Logger.Error("step 1/4: HTTP server graceful shutdown timed out, forcing close", "error", err)
+			c.Logger.Error("HTTP server graceful shutdown timed out, forcing close", "error", err)
 			_ = c.Server.Close()
 		} else {
-			c.Logger.Info("step 1/4: HTTP server stopped")
+			c.Logger.Info("HTTP server stopped")
 		}
 
-		// Step 2: Scanner stops — no new tasks will be enqueued
 		c.Scanner.Stop()
-		c.Logger.Info("step 2/4: positions scanner stopped")
+		c.Logger.Info("positions scanner stopped")
 
-		// Step 3: Workers drain remaining tasks in queue within shutdown timeout
 		if err := c.PositionsPool.Stop(shutdownCtx); err != nil {
-			c.Logger.Error("step 3/4: positions worker pool drain failed", "error", err)
+			c.Logger.Error("positions worker pool drain failed", "error", err)
 		} else {
-			c.Logger.Info("step 3/4: positions worker pool drained and stopped")
+			c.Logger.Info("positions worker pool stopped")
 		}
 
-		// Step 4: Close Push client, database pool, and telemetry
 		if err := c.Close(shutdownCtx); err != nil {
-			c.Logger.Error("step 4/4: failed to close database and telemetry", "error", err)
+			c.Logger.Error("failed to close resources", "error", err)
 			return fmt.Errorf("close resources: %w", err)
 		}
-		c.Logger.Info("step 4/4: resources closed, shutdown complete")
+		c.Logger.Info("shutdown complete")
 
 		return nil
 	}
